@@ -1,0 +1,1310 @@
+/**
+ * ============================================================================
+ * API DEVELOPMENT PROMPT - For Your Existing Multi-Tenant Project
+ * ============================================================================
+ * 
+ * Use this prompt for ALL NEW or ENHANCED APIs to maintain consistent:
+ * - Code quality & standards
+ * - Security practices
+ * - Logging & observability (IMPROVED - Winston + Structured Logs)
+ * - Rate limiting & traffic control (IMPROVED - 7 specialized limiters)
+ * - Transaction handling
+ * - Multi-tenant architecture support
+ * - SonarQube compliance
+ * - Performance optimization
+ * - 50+ years backend experience standards
+ * - Production-grade enterprise practices
+ * 
+ * Your Project Architecture:
+ * - T1 (Default): Shared database - colleges, users, students in MAIN DB
+ * - T2+ (Future): Separate databases - each tenant has own connection
+ * 
+ * ============================================================================
+ * ⭐ UPDATED: LOGGING & RATE LIMITING
+ * ============================================================================
+ */
+
+// ============================================================================
+// LOGGING STANDARDS (IMPROVED - Winston)
+// ============================================================================
+
+/**
+ * All logging uses Winston logger with structured JSON output
+ * 
+ * Log Levels:
+ * - error: System errors, exceptions (level 0)
+ * - warn: Warnings, validation failures (level 1)
+ * - info: API calls, successful operations (level 2)
+ * - debug: Detailed flow information (level 3)
+ * 
+ * Usage in Controllers:
+ * ✅ logger.info(`${LOG.API_START_PREFIX} METHOD /endpoint`, { user_id, ip })
+ * ✅ logger.info(`${LOG.API_END_PREFIX} METHOD /endpoint`, { duration_ms })
+ * ✅ logger.error(`${LOG.API_ERROR_PREFIX} METHOD /endpoint`, { error, code })
+ * ✅ logger.warn(`${LOG.SECURITY_PREFIX} Unauthorized access`, { user_id })
+ * ✅ logger.warn(`${LOG.VALIDATION_PREFIX} Missing fields`, { fields })
+ * ✅ logger.debug(`${LOG.TRANSACTION_PREFIX} Starting operation`)
+ * ✅ logger.info(`${LOG.TRANSACTION_PREFIX} Committed`, { resource_id })
+ * ✅ logger.error(`${LOG.TRANSACTION_PREFIX} Rolled back`, { error })
+ * 
+ * DO NOT USE:
+ * ❌ console.log()
+ * ❌ console.error()
+ * ❌ console.warn()
+ * 
+ * Features:
+ * - Console output (colored, human-readable) in development
+ * - File rotation (10MB per file, keep 5-10 files) in production
+ * - Separate error/info/combined logs
+ * - Error stack traces captured
+ * - Metadata tracking (user_id, tenant_id, IP, duration)
+ * - Environment-specific log levels
+ * - Uncaught exception handlers
+ * 
+ * Log Output Example (Development):
+ * 2025-11-16T20:30:45.123Z [INFO]: [API_START] POST /api/v1/resources user_id=123 ip=192.168.1.1
+ * 2025-11-16T20:30:46.456Z [DEBUG]: [TRANSACTION] Starting resource creation
+ * 2025-11-16T20:30:47.789Z [INFO]: [TRANSACTION] Transaction committed resource_id=1
+ * 2025-11-16T20:30:48.012Z [INFO]: [API_END] POST /api/v1/resources duration_ms=2889
+ */
+
+// ============================================================================
+// RATE LIMITING STANDARDS (IMPROVED - 7 Specialized Limiters)
+// ============================================================================
+
+/**
+ * Rate limiting prevents abuse and controls traffic
+ * 
+ * Limiter Types (Import from rateLimiter.js):
+ * 
+ * 1. globalLimiter (Applied to all routes)
+ *    - 100 requests per 15 minutes per IP
+ *    - Bypass: System admins, health check
+ *    - Apply: app.use(globalLimiter)
+ * 
+ * 2. authLimiter (Authentication endpoints - STRICT)
+ *    - 5 attempts per 15 minutes per IP
+ *    - Bypass: None (security feature)
+ *    - Apply: router.post('/login', authLimiter, controller)
+ * 
+ * 3. apiLimiter (General API endpoints - MODERATE)
+ *    - 50 requests per minute per IP
+ *    - Bypass: System admins
+ *    - Apply: router.post('/create', apiLimiter, controller)
+ * 
+ * 4. uploadLimiter (File uploads - STRICT)
+ *    - 10 uploads per hour per user
+ *    - Bypass: System admins
+ *    - Apply: router.post('/upload', uploadLimiter, controller)
+ * 
+ * 5. searchLimiter (Search operations - MODERATE)
+ *    - 30 searches per minute per user
+ *    - Bypass: System admins
+ *    - Apply: router.get('/search', searchLimiter, controller)
+ * 
+ * 6. tenantLimiter (Per-tenant isolation)
+ *    - 100 requests per 15 minutes per tenant
+ *    - Bypass: System admins
+ *    - Apply: router.use('/', tenantLimiter)
+ * 
+ * 7. collegeLimiter (Per-college isolation)
+ *    - 200 requests per 15 minutes per college
+ *    - Bypass: System admins
+ *    - Apply: router.use('/', collegeLimiter)
+ * 
+ * Usage in Routes:
+ * ✅ const { authLimiter, uploadLimiter } = require('../config/rateLimiter');
+ * ✅ router.post('/login', authLimiter, authController.login);
+ * ✅ router.post('/upload', uploadLimiter, fileController.upload);
+ * 
+ * Rate Limit Exceeded Response (429):
+ * {
+ *   "success": false,
+ *   "message": "Too many requests, please try again later",
+ *   "retryAfter": 1234567890
+ * }
+ * 
+ * Response Headers:
+ * - RateLimit-Limit: 100
+ * - RateLimit-Remaining: 87
+ * - RateLimit-Reset: 1637091045
+ */
+
+// ============================================================================
+// CRITICAL: DATABASE POOL SELECTION LOGIC
+// ============================================================================
+
+/**
+ * RULE 1: Query TENANTS or COLLEGES table
+ * Always use: getMainPool()
+ * Reason: These tables exist only in main database
+ * 
+ * Example:
+ * const mainPool = getMainPool();
+ * const { rows } = await mainPool.query(
+ *   'SELECT * FROM colleges WHERE college_id = $1',
+ *   [collegeId]
+ * );
+ */
+
+/**
+ * RULE 2: Query USERS, STUDENTS, or tenant-specific tables
+ * First: Get tenant info from colleges table (use getMainPool)
+ * Then: Get pool for that tenant (use getPoolForTenant)
+ * Finally: Query using tenant's pool
+ * 
+ * Example:
+ * // Step 1: Get tenant info from main DB
+ * const mainPool = getMainPool();
+ * const collegeQuery = 'SELECT tenant_id, college_id FROM colleges WHERE college_id = $1';
+ * const collegeResult = await mainPool.query(collegeQuery, [collegeId]);
+ * const college = collegeResult.rows[0];
+ * 
+ * // Step 2: Get tenant record to get db_url (if separate DB)
+ * const tenantQuery = 'SELECT * FROM tenants WHERE tenant_id = $1';
+ * const tenantResult = await mainPool.query(tenantQuery, [college.tenant_id]);
+ * const tenant = tenantResult.rows[0];
+ * 
+ * // Step 3: Get pool for this tenant
+ * const tenantPool = getPoolForTenant({
+ *   tenant_id: tenant.tenant_id,
+ *   tenant_name: tenant.tenant_name,
+ *   db_url: tenant.db_url // null for T1 (uses main), or connection string for T2+
+ * });
+ * 
+ * // Step 4: Query users/students table
+ * const { rows } = await tenantPool.query(
+ *   'SELECT * FROM users WHERE college_id = $1',
+ *   [collegeId]
+ * );
+ */
+
+/**
+ * CURRENT STATE (Right Now):
+ * - T1: All colleges, users, students in MAIN DATABASE ONLY
+ * - getPoolForTenant(null or {db_url: null}) → returns mainPool
+ * - So all queries use getMainPool() or getPoolForTenant(null)
+ * - Same database for everything
+ * 
+ * FUTURE STATE (When T2+ needed):
+ * - T2: Has separate database connection string in tenants.db_url
+ * - getPoolForTenant({db_url: "postgres://..."}) → returns dedicated pool
+ * - Your code will automatically work with separate databases
+ * - No code changes needed - just add db_url to tenant record
+ */
+
+// ============================================================================
+// STEP-BY-STEP API CREATION PROCESS
+// ============================================================================
+
+// ============================================================================
+// STEP 1: CREATE VALIDATOR
+// ============================================================================
+
+/**
+ * File: src/validators/yourResourceValidator.js
+ * 
+ * What to do:
+ * - Define Joi schema for request body validation
+ * - Use error messages from constants.js
+ * - Export schema with clear name
+ * - Support query parameters if needed
+ */
+
+// Example:
+const Joi = require('joi');
+const { VALIDATION, STATUS, ROLES } = require('../config/constants');
+
+// Request body validation
+const createYourResourceSchema = Joi.object({
+  resource_name: Joi.string()
+    .min(VALIDATION.STRING_MIN_LENGTH)
+    .max(VALIDATION.STRING_MAX_LENGTH)
+    .required()
+    .messages({
+      'string.empty': 'Resource name is required',
+      'string.min': `Minimum ${VALIDATION.STRING_MIN_LENGTH} characters`
+    }),
+
+  resource_description: Joi.string()
+    .max(500)
+    .optional(),
+
+  status: Joi.string()
+    .valid(...Object.values(STATUS))
+    .optional()
+    .default(STATUS.ACTIVE),
+
+  assigned_to: Joi.number()
+    .positive()
+    .optional()
+    .messages({
+      'number.positive': 'Invalid user ID'
+    })
+});
+
+const updateYourResourceSchema = Joi.object({
+  resource_name: Joi.string()
+    .min(VALIDATION.STRING_MIN_LENGTH)
+    .max(VALIDATION.STRING_MAX_LENGTH)
+    .optional(),
+
+  resource_description: Joi.string()
+    .max(500)
+    .optional(),
+
+  status: Joi.string()
+    .valid(...Object.values(STATUS))
+    .optional()
+}).min(1).messages({
+  'object.min': 'At least one field must be updated'
+});
+
+// Query parameter validation (for list endpoint)
+const listYourResourcesSchema = Joi.object({
+  page: Joi.number()
+    .positive()
+    .optional()
+    .default(1),
+
+  limit: Joi.number()
+    .positive()
+    .max(100)
+    .optional()
+    .default(20),
+
+  status: Joi.string()
+    .valid(...Object.values(STATUS))
+    .optional(),
+
+  search: Joi.string()
+    .max(100)
+    .optional()
+});
+
+module.exports = {
+  createYourResourceSchema,
+  updateYourResourceSchema,
+  listYourResourcesSchema
+};
+
+// ============================================================================
+// STEP 2: CREATE SERVICE
+// ============================================================================
+
+/**
+ * File: src/services/yourResourceService.js
+ * 
+ * What to do:
+ * - Database queries using correct pool (see RULE 1 & RULE 2 above)
+ * - Transaction handling for multi-step operations
+ * - Use logger for all operations (not console.log)
+ * - Return only data (no res.json)
+ * - Throw errors for controller to handle
+ * - NO business logic in controllers
+ */
+
+// Example:
+const { getPoolForTenant, getMainPool } = require('../config/db');
+const logger = require('../config/logger');
+const { LOG, STATUS, DB_ERROR_CODES, HTTP_STATUS } = require('../config/constants');
+
+class YourResourceService {
+  /**
+   * Creates resource with transaction
+   * 
+   * Database: Gets tenant info first, then uses appropriate pool
+   * Isolation: SERIALIZABLE to prevent race conditions
+   * Logging: All operations logged with LOG prefixes
+   * 
+   * @param {Object} data - Resource data { resource_name, description, assigned_to }
+   * @param {number} collegeId - College ID (required for tenant isolation)
+   * @param {Object} tenant - Tenant info from req.tenant
+   * @returns {Object} Created resource
+   * @throws {Error} Database errors
+   */
+  async create(data, collegeId, tenant = null) {
+    const mainPool = getMainPool();
+    const client = await mainPool.connect();
+
+    try {
+      // Log transaction start
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Starting resource creation transaction`, {
+        college_id: collegeId
+      });
+
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+
+      // Step 1: Verify college exists and belongs to this tenant
+      const collegeCheckQuery = `
+        SELECT college_id, tenant_id FROM colleges 
+        WHERE college_id = $1 
+        AND status = $2 
+        LIMIT 1
+      `;
+
+      const collegeCheckResult = await client.query(collegeCheckQuery, [
+        collegeId,
+        STATUS.ACTIVE
+      ]);
+
+      if (!collegeCheckResult.rows.length) {
+        throw new Error('College not found or inactive');
+      }
+
+      const college = collegeCheckResult.rows[0];
+
+      // Verify tenant isolation
+      if (tenant && college.tenant_id !== tenant.tenant_id) {
+        throw new Error('Access denied - College does not belong to your tenant');
+      }
+
+      // Step 2: Insert resource
+      const insertQuery = `
+        INSERT INTO your_resources (
+          college_id,
+          resource_name,
+          resource_description,
+          assigned_to,
+          status,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        RETURNING *
+      `;
+
+      const { rows } = await client.query(insertQuery, [
+        collegeId,
+        data.resource_name,
+        data.resource_description || null,
+        data.assigned_to || null,
+        STATUS.ACTIVE
+      ]);
+
+      // Step 3: If assigned_to is provided, verify user exists
+      if (data.assigned_to) {
+        const userCheckQuery = `
+          SELECT user_id FROM users 
+          WHERE user_id = $1 
+          AND college_id = $2 
+          LIMIT 1
+        `;
+
+        const userCheckResult = await client.query(userCheckQuery, [
+          data.assigned_to,
+          collegeId
+        ]);
+
+        if (!userCheckResult.rows.length) {
+          throw new Error('Assigned user not found in this college');
+        }
+      }
+
+      // Log transaction commit
+      await client.query('COMMIT');
+
+      logger.info(
+        `${LOG.TRANSACTION_PREFIX} Resource created successfully`,
+        {
+          resource_id: rows[0].id,
+          college_id: collegeId,
+          created_by_tenant: college.tenant_id
+        }
+      );
+
+      return rows[0];
+
+    } catch (err) {
+      // Log transaction rollback
+      await client.query('ROLLBACK');
+
+      logger.error(
+        `${LOG.TRANSACTION_PREFIX} Resource creation failed - transaction rolled back`,
+        {
+          error: err.message,
+          code: err.code,
+          college_id: collegeId
+        }
+      );
+
+      // Handle specific database errors
+      if (err.code === DB_ERROR_CODES.UNIQUE_VIOLATION) {
+        throw new Error('Resource with this name already exists');
+      }
+
+      if (err.code === DB_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
+        throw new Error('Invalid college or user reference');
+      }
+
+      throw err;
+
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Fetch single resource by ID
+   * 
+   * @param {number} resourceId - Resource ID
+   * @param {number} collegeId - College ID (for tenant isolation)
+   * @param {Object} tenant - Tenant info
+   * @returns {Object} Resource data
+   * @throws {Error} If not found
+   */
+  async getById(resourceId, collegeId, tenant = null) {
+    const mainPool = getMainPool(); // All tables currently in main DB
+
+    const query = `
+      SELECT * FROM your_resources 
+      WHERE id = $1 
+      AND college_id = $2 
+      AND status = $3
+      LIMIT 1
+    `;
+
+    const { rows } = await mainPool.query(query, [
+      resourceId,
+      collegeId,
+      STATUS.ACTIVE
+    ]);
+
+    if (!rows.length) {
+      throw new Error('Resource not found');
+    }
+
+    // Verify tenant isolation
+    if (tenant) {
+      const collegeQuery = `
+        SELECT tenant_id FROM colleges WHERE college_id = $1
+      `;
+      const collegeResult = await mainPool.query(collegeQuery, [collegeId]);
+
+      if (collegeResult.rows[0].tenant_id !== tenant.tenant_id) {
+        throw new Error('Access denied - Resource does not belong to your tenant');
+      }
+    }
+
+    return rows[0];
+  }
+
+  /**
+   * Update resource
+   * 
+   * @param {number} resourceId - Resource ID
+   * @param {Object} data - Update data
+   * @param {number} collegeId - College ID
+   * @param {Object} tenant - Tenant info
+   * @returns {Object} Updated resource
+   */
+  async update(resourceId, data, collegeId, tenant = null) {
+    const mainPool = getMainPool();
+    const client = await mainPool.connect();
+
+    try {
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Starting resource update transaction`, {
+        resource_id: resourceId,
+        college_id: collegeId
+      });
+
+      await client.query('BEGIN');
+
+      // Verify resource exists and belongs to college
+      const checkQuery = `
+        SELECT id FROM your_resources 
+        WHERE id = $1 
+        AND college_id = $2 
+        LIMIT 1
+      `;
+
+      const checkResult = await client.query(checkQuery, [resourceId, collegeId]);
+
+      if (!checkResult.rows.length) {
+        throw new Error('Resource not found');
+      }
+
+      // Verify tenant isolation
+      if (tenant) {
+        const tenantCheckQuery = `
+          SELECT c.tenant_id FROM colleges c
+          WHERE c.college_id = $1
+        `;
+        const tenantCheckResult = await client.query(tenantCheckQuery, [collegeId]);
+
+        if (tenantCheckResult.rows[0].tenant_id !== tenant.tenant_id) {
+          throw new Error('Access denied');
+        }
+      }
+
+      // Update resource
+      const updateQuery = `
+        UPDATE your_resources
+        SET 
+          resource_name = COALESCE($1, resource_name),
+          resource_description = COALESCE($2, resource_description),
+          assigned_to = COALESCE($3, assigned_to),
+          status = COALESCE($4, status),
+          updated_at = NOW()
+        WHERE id = $5
+        AND college_id = $6
+        RETURNING *
+      `;
+
+      const { rows } = await client.query(updateQuery, [
+        data.resource_name || null,
+        data.resource_description || null,
+        data.assigned_to || null,
+        data.status || null,
+        resourceId,
+        collegeId
+      ]);
+
+      await client.query('COMMIT');
+
+      logger.info(
+        `${LOG.TRANSACTION_PREFIX} Resource updated successfully`,
+        {
+          resource_id: resourceId,
+          college_id: collegeId,
+          updated_fields: Object.keys(data)
+        }
+      );
+
+      return rows[0];
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+
+      logger.error(
+        `${LOG.TRANSACTION_PREFIX} Resource update failed - rolled back`,
+        { error: err.message }
+      );
+
+      throw err;
+
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * List resources with filtering and pagination
+   * 
+   * @param {Object} filters - { status, search, assigned_to }
+   * @param {number} collegeId - College ID
+   * @param {number} page - Page number
+   * @param {number} limit - Items per page
+   * @param {Object} tenant - Tenant info
+   * @returns {Object} { data, pagination }
+   */
+  async list(filters = {}, collegeId, page = 1, limit = 20, tenant = null) {
+    const mainPool = getMainPool();
+
+    const offset = (page - 1) * limit;
+
+    // Build dynamic query
+    let baseQuery = `
+      SELECT * FROM your_resources 
+      WHERE college_id = $1 
+      AND status = $2
+    `;
+
+    const params = [collegeId, STATUS.ACTIVE];
+    let paramIndex = 3;
+
+    // Add optional filters
+    if (filters.status && filters.status !== STATUS.ACTIVE) {
+      baseQuery += ` AND status = $${paramIndex}`;
+      params.push(filters.status);
+      paramIndex++;
+    }
+
+    if (filters.search) {
+      baseQuery += ` AND resource_name ILIKE $${paramIndex}`;
+      params.push(`%${filters.search}%`);
+      paramIndex++;
+    }
+
+    if (filters.assigned_to) {
+      baseQuery += ` AND assigned_to = $${paramIndex}`;
+      params.push(filters.assigned_to);
+      paramIndex++;
+    }
+
+    // Count total
+    const countQuery = baseQuery.replace('SELECT *', 'SELECT COUNT(*) as total');
+    const countResult = await mainPool.query(countQuery, params.slice(0, paramIndex - 1));
+    const total = parseInt(countResult.rows[0].total);
+
+    // Fetch paginated results
+    const listQuery = baseQuery + `
+      ORDER BY created_at DESC 
+      LIMIT $${paramIndex} 
+      OFFSET $${paramIndex + 1}
+    `;
+
+    params.push(limit, offset);
+
+    const { rows } = await mainPool.query(listQuery, params);
+
+    logger.debug(
+      `${LOG.TRANSACTION_PREFIX} Resources listed`,
+      {
+        college_id: collegeId,
+        total_count: total,
+        returned_count: rows.length,
+        page: page
+      }
+    );
+
+    return {
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    };
+  }
+
+  /**
+   * Soft delete resource (mark as inactive)
+   * 
+   * @param {number} resourceId - Resource ID
+   * @param {number} collegeId - College ID
+   * @param {Object} tenant - Tenant info
+   * @returns {Object} Deleted resource
+   */
+  async delete(resourceId, collegeId, tenant = null) {
+    const mainPool = getMainPool();
+
+    const query = `
+      UPDATE your_resources
+      SET status = $1, updated_at = NOW()
+      WHERE id = $2
+      AND college_id = $3
+      RETURNING id, resource_name
+    `;
+
+    const { rows } = await mainPool.query(query, [
+      STATUS.INACTIVE,
+      resourceId,
+      collegeId
+    ]);
+
+    if (!rows.length) {
+      throw new Error('Resource not found');
+    }
+
+    logger.info(
+      `${LOG.TRANSACTION_PREFIX} Resource soft deleted`,
+      {
+        resource_id: resourceId,
+        college_id: collegeId,
+        resource_name: rows[0].resource_name
+      }
+    );
+
+    return rows[0];
+  }
+}
+
+module.exports = new YourResourceService();
+
+// ============================================================================
+// STEP 3: CREATE CONTROLLER
+// ============================================================================
+
+/**
+ * File: src/controllers/yourResourceController.js
+ * 
+ * What to do:
+ * - Log API_START at beginning with metadata
+ * - Log API_END on success with duration
+ * - Log API_ERROR on failure with error details
+ * - Call service functions only
+ * - Use responseHelper for responses
+ * - Handle authorization checks
+ * - NO database queries directly
+ */
+
+// Example:
+const yourResourceService = require('../services/yourResourceService');
+const logger = require('../config/logger');
+const { LOG, HTTP_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES, ROLES } = require('../config/constants');
+const { success, error } = require('../utils/responseHelper');
+
+/**
+ * POST /api/v1/resources
+ * Create new resource
+ */
+async function createResource(req, res) {
+  const requestId = `${LOG.API_START_PREFIX} POST /resources`;
+  const startTime = Date.now();
+
+  logger.info(requestId, {
+    user_id: req.user?.id,
+    user_role: req.user?.role,
+    college_id: req.user?.college_id,
+    tenant_id: req.tenant?.tenant_id || 'main',
+    ip: req.ip
+  });
+
+  try {
+    const { resource_name, resource_description, assigned_to } = req.validated;
+
+    // Authorization check: Only admin/sysadmin can create
+    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
+      logger.warn(
+        `${LOG.SECURITY_PREFIX} Unauthorized resource creation attempt`,
+        {
+          user_id: req.user?.id,
+          user_role: req.user?.role,
+          required_role: ROLES.ADMIN
+        }
+      );
+
+      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    }
+
+    // Call service
+    const newResource = await yourResourceService.create(
+      {
+        resource_name,
+        resource_description,
+        assigned_to
+      },
+      req.user.college_id,
+      req.tenant
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `${LOG.API_END_PREFIX} POST /resources - Resource created successfully`,
+      {
+        resource_id: newResource.id,
+        resource_name: newResource.resource_name,
+        created_by: req.user.id,
+        college_id: req.user.college_id,
+        duration_ms: duration
+      }
+    );
+
+    return success(
+      res,
+      newResource,
+      SUCCESS_MESSAGES.RESOURCE_CREATED,
+      HTTP_STATUS.CREATED
+    );
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+
+    logger.error(
+      `${LOG.API_ERROR_PREFIX} POST /resources - Error`,
+      {
+        error: err.message,
+        user_id: req.user?.id,
+        college_id: req.user?.college_id,
+        duration_ms: duration,
+        stack: err.stack
+      }
+    );
+
+    if (err.message.includes('already exists')) {
+      return error(res, err.message, HTTP_STATUS.CONFLICT);
+    }
+
+    if (err.message.includes('not found') || err.message.includes('does not belong')) {
+      return error(res, err.message, HTTP_STATUS.BAD_REQUEST);
+    }
+
+    if (err.message.includes('Access denied')) {
+      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    }
+
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
+/**
+ * GET /api/v1/resources/:resourceId
+ * Fetch single resource
+ */
+async function getResource(req, res) {
+  const requestId = `${LOG.API_START_PREFIX} GET /resources/:resourceId`;
+  const startTime = Date.now();
+
+  logger.info(requestId, {
+    resource_id: req.params.resourceId,
+    user_id: req.user?.id,
+    college_id: req.user?.college_id
+  });
+
+  try {
+    const resource = await yourResourceService.getById(
+      req.params.resourceId,
+      req.user.college_id,
+      req.tenant
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `${LOG.API_END_PREFIX} GET /resources/:resourceId - Retrieved successfully`,
+      { resource_id: resource.id, duration_ms: duration }
+    );
+
+    return success(res, resource);
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+
+    logger.error(
+      `${LOG.API_ERROR_PREFIX} GET /resources/:resourceId - Error`,
+      { error: err.message, duration_ms: duration }
+    );
+
+    if (err.message.includes('not found')) {
+      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (err.message.includes('Access denied')) {
+      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    }
+
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
+/**
+ * PUT /api/v1/resources/:resourceId
+ * Update resource
+ */
+async function updateResource(req, res) {
+  const requestId = `${LOG.API_START_PREFIX} PUT /resources/:resourceId`;
+  const startTime = Date.now();
+
+  logger.info(requestId, {
+    resource_id: req.params.resourceId,
+    user_id: req.user?.id,
+    college_id: req.user?.college_id,
+    updated_fields: Object.keys(req.validated)
+  });
+
+  try {
+    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
+      logger.warn(
+        `${LOG.SECURITY_PREFIX} Unauthorized update attempt`,
+        { user_id: req.user?.id }
+      );
+      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    }
+
+    const updatedResource = await yourResourceService.update(
+      req.params.resourceId,
+      req.validated,
+      req.user.college_id,
+      req.tenant
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `${LOG.API_END_PREFIX} PUT /resources/:resourceId - Updated successfully`,
+      { resource_id: updatedResource.id, duration_ms: duration }
+    );
+
+    return success(res, updatedResource, SUCCESS_MESSAGES.RESOURCE_UPDATED);
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+
+    logger.error(
+      `${LOG.API_ERROR_PREFIX} PUT /resources/:resourceId - Error`,
+      { error: err.message, duration_ms: duration }
+    );
+
+    if (err.message.includes('not found')) {
+      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
+    }
+
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
+/**
+ * GET /api/v1/resources
+ * List resources with pagination
+ */
+async function listResources(req, res) {
+  const requestId = `${LOG.API_START_PREFIX} GET /resources`;
+  const startTime = Date.now();
+
+  logger.info(requestId, {
+    user_id: req.user?.id,
+    college_id: req.user?.college_id,
+    query_params: req.query
+  });
+
+  try {
+    const page = req.validated?.page || 1;
+    const limit = req.validated?.limit || 20;
+
+    const filters = {
+      status: req.validated?.status,
+      search: req.validated?.search,
+      assigned_to: req.validated?.assigned_to
+    };
+
+    const result = await yourResourceService.list(
+      filters,
+      req.user.college_id,
+      page,
+      limit,
+      req.tenant
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `${LOG.API_END_PREFIX} GET /resources - Retrieved ${result.data.length} resources`,
+      {
+        total: result.pagination.total,
+        page: page,
+        limit: limit,
+        duration_ms: duration
+      }
+    );
+
+    return success(
+      res,
+      result.data,
+      'Resources retrieved',
+      HTTP_STATUS.OK
+    );
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+
+    logger.error(
+      `${LOG.API_ERROR_PREFIX} GET /resources - Error`,
+      { error: err.message, duration_ms: duration }
+    );
+
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
+/**
+ * DELETE /api/v1/resources/:resourceId
+ * Soft delete resource
+ */
+async function deleteResource(req, res) {
+  const requestId = `${LOG.API_START_PREFIX} DELETE /resources/:resourceId`;
+  const startTime = Date.now();
+
+  logger.info(requestId, {
+    resource_id: req.params.resourceId,
+    user_id: req.user?.id
+  });
+
+  try {
+    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
+      logger.warn(
+        `${LOG.SECURITY_PREFIX} Unauthorized delete attempt`,
+        { user_id: req.user?.id }
+      );
+      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    }
+
+    await yourResourceService.delete(
+      req.params.resourceId,
+      req.user.college_id,
+      req.tenant
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(
+      `${LOG.API_END_PREFIX} DELETE /resources/:resourceId - Deleted successfully`,
+      { resource_id: req.params.resourceId, duration_ms: duration }
+    );
+
+    return success(res, {}, SUCCESS_MESSAGES.RESOURCE_DELETED);
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+
+    logger.error(
+      `${LOG.API_ERROR_PREFIX} DELETE /resources/:resourceId - Error`,
+      { error: err.message, duration_ms: duration }
+    );
+
+    if (err.message.includes('not found')) {
+      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
+    }
+
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+  }
+}
+
+module.exports = {
+  createResource,
+  getResource,
+  updateResource,
+  listResources,
+  deleteResource
+};
+
+// ============================================================================
+// STEP 4: CREATE ROUTES
+// ============================================================================
+
+/**
+ * File: src/routes/yourResource.routes.js
+ * 
+ * What to do:
+ * - Define routes with authMiddleware
+ * - Add requireRole for authorization
+ * - Apply validate() with appropriate schema
+ * - Apply rate limiters where needed
+ * - Map to controller functions
+ */
+
+// Example:
+const express = require('express');
+const router = express.Router();
+const yourResourceController = require('../controllers/yourResourceController');
+const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
+const validate = require('../middleware/validateRequest');
+const {
+  createYourResourceSchema,
+  updateYourResourceSchema,
+  listYourResourcesSchema
+} = require('../validators/yourResourceValidator');
+const { apiLimiter, searchLimiter } = require('../config/rateLimiter');
+const { ROLES } = require('../config/constants');
+
+// ✅ POST - Create resource (Admin/Sysadmin only)
+router.post(
+  '/',
+  authMiddleware,
+  requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
+  apiLimiter,
+  validate(createYourResourceSchema),
+  yourResourceController.createResource
+);
+
+// ✅ GET - List resources (Authenticated users)
+router.get(
+  '/',
+  authMiddleware,
+  searchLimiter,
+  validate(listYourResourcesSchema),
+  yourResourceController.listResources
+);
+
+// ✅ GET - Get single resource (Authenticated users)
+router.get(
+  '/:resourceId',
+  authMiddleware,
+  yourResourceController.getResource
+);
+
+// ✅ PUT - Update resource (Admin/Sysadmin only)
+router.put(
+  '/:resourceId',
+  authMiddleware,
+  requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
+  apiLimiter,
+  validate(updateYourResourceSchema),
+  yourResourceController.updateResource
+);
+
+// ✅ DELETE - Delete resource (Admin/Sysadmin only)
+router.delete(
+  '/:resourceId',
+  authMiddleware,
+  requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
+  apiLimiter,
+  yourResourceController.deleteResource
+);
+
+module.exports = router;
+
+// ============================================================================
+// STEP 5: ADD CONSTANTS
+// ============================================================================
+
+/**
+ * File: src/config/constants.js
+ * 
+ * What to do:
+ * - Add ONLY NEW error messages needed for this API
+ * - Add ONLY NEW success messages needed
+ * - Don't duplicate existing ones
+ * - Keep alphabetical order
+ */
+
+// Add to ERROR_MESSAGES object:
+const ERROR_MESSAGES = {
+  // ... existing errors ...
+  RESOURCE_NOT_FOUND: 'Resource not found or has been deleted',
+  RESOURCE_ALREADY_EXISTS: 'Resource with this name already exists',
+  INVALID_RESOURCE_STATUS: 'Invalid resource status provided',
+  RESOURCE_ASSIGNMENT_FAILED: 'Failed to assign resource to user'
+};
+
+// Add to SUCCESS_MESSAGES object:
+const SUCCESS_MESSAGES = {
+  // ... existing messages ...
+  RESOURCE_CREATED: 'Resource created successfully',
+  RESOURCE_UPDATED: 'Resource updated successfully',
+  RESOURCE_DELETED: 'Resource deleted successfully'
+};
+
+// ============================================================================
+// STEP 6: UPDATE ROUTES INDEX
+// ============================================================================
+
+/**
+ * File: src/routes/index.js
+ * 
+ * What to do:
+ * - Import your new route file
+ * - Add one line to use the route
+ * - That's it!
+ */
+
+// Example:
+const express = require('express');
+const router = express.Router();
+
+const authRoutes = require('./auth.routes');
+const tenantRoutes = require('./tenant.routes');
+const studentRoutes = require('./student.routes');
+const userRoutes = require('./user.routes');
+const yourResourceRoutes = require('./yourResource.routes'); // ← ADD THIS LINE
+
+router.use('/auth', authRoutes);
+router.use('/admin', tenantRoutes);
+router.use('/students', studentRoutes);
+router.use('/users', userRoutes);
+router.use('/resources', yourResourceRoutes); // ← ADD THIS LINE
+
+module.exports = router;
+
+// ============================================================================
+// CHECKLIST BEFORE SUBMITTING
+// ============================================================================
+
+/**
+ * Before Writing Code:
+ * ✅ Validator schema defined with all required fields
+ * ✅ Service functions planned (create, get, update, list, delete)
+ * ✅ Database queries identified
+ * ✅ Pool selection logic determined (mainPool or getPoolForTenant)
+ * ✅ Transaction requirements identified
+ * ✅ Error cases documented
+ * 
+ * While Writing Code:
+ * ✅ API_START logging at beginning with metadata
+ * ✅ API_END logging on success with duration_ms
+ * ✅ API_ERROR logging with full context
+ * ✅ TRANSACTION logging for multi-step ops (start, commit, rollback)
+ * ✅ SECURITY logging for authorization failures
+ * ✅ VALIDATION logging for input failures
+ * ✅ Correct pool used (Rule 1 & Rule 2)
+ * ✅ All responses use success/error helper
+ * ✅ All errors from constants.js
+ * ✅ Proper HTTP status codes
+ * ✅ Controllers call services (NOT direct DB)
+ * ✅ No magic strings/numbers
+ * ✅ JSDoc comments on all functions
+ * ✅ Try-catch error handling with duration tracking
+ * ✅ College ID passed to service (tenant isolation)
+ * ✅ Tenant info validated in service
+ * ✅ Apply appropriate rate limiters to routes
+ * 
+ * After Writing Code:
+ * ✅ No console.log() - all use logger
+ * ✅ All inputs validated with Joi
+ * ✅ All queries parameterized
+ * ✅ Authorization checks present
+ * ✅ Tenant isolation verified
+ * ✅ Soft delete used (status = inactive)
+ * ✅ No error details exposed to client
+ * ✅ Database errors handled properly
+ * ✅ No passwords logged
+ * ✅ Route added to routes/index.js
+ * ✅ New constants added (no duplicates)
+ * ✅ Rate limiters applied (authLimiter, apiLimiter, searchLimiter)
+ */
+
+// ============================================================================
+// CURRENT STATE vs FUTURE STATE
+// ============================================================================
+
+/**
+ * CURRENT (Your System Today):
+ * 
+ * T1 (Default Tenant):
+ * - tenant_id: 'T1'
+ * - tenant_name: 'default'
+ * - db_url: null
+ * 
+ * Database: SINGLE MAIN DATABASE
+ * ├── colleges table
+ * ├── users table
+ * ├── students table
+ * ├── your_resources table (new)
+ * └── all other tables
+ * 
+ * Pool Usage:
+ * - ALL queries use: getMainPool()
+ * - OR: getPoolForTenant(null) → returns mainPool
+ * - SAME database for everything
+ * 
+ * Your Code Action:
+ * - Use getMainPool() directly for simplicity
+ * - OR use getPoolForTenant(null)
+ * - Both work identically right now
+ * 
+ * ============================================================================
+ * 
+ * FUTURE (When T2+ Needed):
+ * 
+ * T1 (Default):
+ * - tenant_id: 'T1'
+ * - db_url: null
+ * - Uses: MAIN DATABASE
+ * 
+ * T2 (New Enterprise Tenant):
+ * - tenant_id: 'T2'
+ * - db_url: 'postgresql://user:pass@separate-host:5432/db'
+ * - Uses: SEPARATE DATABASE
+ * 
+ * Your Code:
+ * - AUTOMATICALLY uses separate pool for T2
+ * - NO code changes needed
+ * - Just set db_url in tenants table
+ * - Your service code handles it
+ * 
+ * Example:
+ * // This code works for BOTH T1 and T2
+ * const tenantPool = getPoolForTenant({
+ *   tenant_id: 'T2',
+ *   db_url: 'postgresql://...' // New separate DB
+ * });
+ * // Returns separate pool automatically
+ * 
+ * // For T1:
+ * const tenantPool = getPoolForTenant({
+ *   tenant_id: 'T1',
+ *   db_url: null // null means use main
+ * });
+ * // Returns mainPool
+ */
