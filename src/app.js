@@ -1,35 +1,58 @@
+/**
+ * ============================================================================
+ * APP.JS - Express Application Setup
+ * ============================================================================
+ * Single Database Architecture
+ * - No multi-tenant resolver middleware
+ * - Simple, straightforward middleware chain
+ * ============================================================================
+ */
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 
 const requestLogger = require('./middleware/requestLogger');
-const tenantResolver = require('./middleware/tenantResolver');
-const { globalLimiter } = require('./config/rateLimiter'); // destructure globalLimiter
+const { globalLimiter } = require('./config/rateLimiter');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
-// Security & parsing
+// ============================================================================
+// SECURITY & PARSING
+// ============================================================================
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Logging & rate limiting
+// ============================================================================
+// LOGGING & RATE LIMITING
+// ============================================================================
+
 app.use(requestLogger);
-app.use(globalLimiter); // <- USE middleware here
+app.use(globalLimiter);
 
-// Tenant resolution
-app.use(tenantResolver);
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
 
-// Health check
-app.get('/health', (req, res) => res.json({ ok: true, tenant: req.tenant || null }));
+app.get('/health', (req, res) => {
+  res.json({ ok: true, timestamp: new Date().toISOString() });
+});
 
-// API routes
-app.use('/api/v1', routes);
+// ============================================================================
+// API ROUTES
+// ============================================================================
 
-// Error handler (must be last)
+app.use('/api', routes);
+
+// ============================================================================
+// ERROR HANDLER (Must be last)
+// ============================================================================
+
 app.use(errorHandler);
 
 module.exports = app;

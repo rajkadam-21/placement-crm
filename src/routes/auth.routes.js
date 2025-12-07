@@ -1,12 +1,10 @@
 /**
  * ============================================================================
- * AUTH ROUTES
+ * AUTH ROUTES - Authentication API
  * ============================================================================
- * Authentication API endpoints with:
- * - Strict rate limiting (authLimiter: 5 attempts/15min)
- * - Request validation
- * - Proper middleware ordering
- * ============================================================================
+ * - POST /login - System admin and college user login
+ * - POST /logout - Logout endpoint
+ * - GET /verify - Verify token validity
  */
 
 const express = require('express');
@@ -35,10 +33,9 @@ router.post(
 
 /**
  * POST /api/v1/auth/logout
- * Logout user (optional - JWT is stateless)
+ * Logout user (stateless JWT - optional)
  * 
  * Requires: Authentication
- * Rate Limiter: authLimiter
  */
 router.post(
   '/logout',

@@ -1,21 +1,15 @@
 /**
  * ============================================================================
- * AUTH SERVICE - Authentication Business Logic
+ * AUTH SERVICE - Authentication Business Logic (SIMPLIFIED)
  * ============================================================================
- * Handles authentication operations:
+ * Single Database Architecture
  * - System admin credential verification
- * - College user authentication (RULE 2)
+ * - College user authentication
  * - Token generation
- * 
- * RULE 2 IMPLEMENTATION:
- * Step 1: Get college info from colleges table (mainPool - RULE 1)
- * Step 2: Get tenant info from tenants table (mainPool - RULE 1)
- * Step 3: Get pool for tenant (getPoolForTenant)
- * Step 4: Query users table using tenant pool (RULE 2)
- * ============================================================================
+ * - Status checks: college active, user active
  */
 
-const { getMainPool, getPoolForTenant } = require('../config/db');
+const { getMainPool } = require('../config/db');
 const jwtHelper = require('../utils/jwtHelper');
 const passwordHelper = require('../utils/passwordHelper');
 const logger = require('../config/logger');
@@ -23,8 +17,7 @@ const {
   LOG,
   STATUS,
   ROLES,
-  AUTH,
-  DB_ERROR_CODES
+  AUTH
 } = require('../config/constants');
 
 class AuthService {
@@ -46,7 +39,7 @@ class AuthService {
 
       if (!configEmail || !configPassword) {
         logger.warn(
-          `${LOG.SECURITY_PREFIX} System admin credentials not configured in environment`
+          `${LOG.SECURITY_PREFIX} System admin credentials not configured`
         );
         return false;
       }
@@ -88,17 +81,20 @@ class AuthService {
   /**
    * Authenticate college user
    * 
-   * RULE 2: Get tenant info first, then use tenant pool
+   * Single Database:
+   * 1. Verify college is active
+   * 2. Query user by email
+   * 3. Verify user is active
+   * 4. Verify password
+   * 5. Generate token
    * 
    * @param {string} email - User email
    * @param {string} password - User password
-   * @param {Object} tenant - Tenant info from subdomain (optional)
-   * @returns {Object} { token, user_info, tenant_info }
+   * @returns {Object} { token, user, college }
    * @throws {Error} If authentication fails
    */
-  async authenticateCollegeUser(email, password, tenant = null) {
+  async authenticateCollegeUser(email, password) {
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
 
     try {
       logger.debug(
@@ -107,198 +103,139 @@ class AuthService {
       );
 
       // ====================================================================
-      // Step 1: Get college info from colleges table (RULE 1)
+      // Step 1: Query user with college details
       // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching college info`, { email });
-
-      const collegeQuery = `
-        SELECT c.college_id, c.tenant_id, c.college_status
-        FROM colleges c
-        LIMIT 1
-      `;
-
-      const collegeResult = await client.query(collegeQuery);
-
-      if (!collegeResult.rows.length) {
-        logger.warn(
-          `${LOG.VALIDATION_PREFIX} Authentication failed - no colleges configured`,
-          { email }
-        );
-        throw new Error('No colleges configured');
-      }
-
-      const college = collegeResult.rows[0];
-
-      // ====================================================================
-      // Step 2: Get tenant record (RULE 1)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching tenant record`, {
-        tenant_id: college.tenant_id
-      });
-
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url, status
-        FROM tenants
-        WHERE tenant_id = $1
-        AND status = $2
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [
-        college.tenant_id,
-        STATUS.ACTIVE
-      ]);
-
-      if (!tenantResult.rows.length) {
-        logger.warn(
-          `${LOG.VALIDATION_PREFIX} Authentication failed - tenant not found`,
-          { email, tenant_id: college.tenant_id }
-        );
-        throw new Error('Tenant not found or inactive');
-      }
-
-      const tenantRecord = tenantResult.rows[0];
-
-      client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for tenant (RULE 2)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Getting tenant pool`, {
-        tenant_id: tenantRecord.tenant_id
-      });
-
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenantRecord.tenant_id,
-        tenant_name: tenantRecord.tenant_name,
-        db_url: tenantRecord.db_url
-      });
-
-      // ====================================================================
-      // Step 4: Query user from tenant pool (RULE 2)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Querying user from tenant pool`, {
-        email,
-        tenant_id: tenantRecord.tenant_id
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Querying user credentials`, {
+        email
       });
 
       const userQuery = `
         SELECT 
-          user_id, 
-          user_email, 
-          user_password, 
-          user_role, 
-          college_id,
-          user_status,
-          created_at
-        FROM users 
-        WHERE LOWER(user_email) = LOWER($1)
-        AND user_status = $2
+          u.user_id,
+          u.user_email,
+          u.user_password,
+          u.user_role,
+          u.college_id,
+          u.user_status,
+          c.college_id,
+          c.college_status,
+          c.college_name
+        FROM users u
+        JOIN colleges c ON u.college_id = c.college_id
+        WHERE LOWER(u.user_email) = LOWER($1)
         LIMIT 1
       `;
 
-      const { rows: userRows } = await tenantPool.query(userQuery, [
-        email,
-        STATUS.ACTIVE
-      ]);
+      const { rows } = await mainPool.query(userQuery, [email]);
 
-      if (!userRows || userRows.length === 0) {
+      if (!rows || rows.length === 0) {
         logger.warn(
           `${LOG.SECURITY_PREFIX} Authentication failed - user not found`,
-          { email, tenant_id: tenantRecord.tenant_id }
+          { email }
         );
         throw new Error('Invalid credentials');
       }
 
-      const user = userRows[0];
+      const userRecord = rows[0];
 
       // ====================================================================
-      // Step 5: Verify tenant access (multi-tenant isolation)
+      // Step 2: Check college is active
       // ====================================================================
-      logger.debug(
-        `${LOG.TRANSACTION_PREFIX} Verifying tenant access isolation`,
-        {
-          user_college_id: user.college_id,
-          requested_tenant: tenant?.tenant_id || 'main'
-        }
-      );
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Checking college status`, {
+        college_id: userRecord.college_id,
+        college_status: userRecord.college_status
+      });
 
-      if (tenant && user.college_id !== tenant.college_id) {
+      if (userRecord.college_status !== STATUS.ACTIVE) {
         logger.warn(
-          `${LOG.SECURITY_PREFIX} Unauthorized tenant access attempt`,
+          `${LOG.SECURITY_PREFIX} Authentication failed - college not active`,
           {
-            user_id: user.user_id,
-            user_college_id: user.college_id,
-            requested_college_id: tenant.college_id,
-            requested_subdomain: tenant.college_subdomain
+            user_id: userRecord.user_id,
+            college_id: userRecord.college_id,
+            college_status: userRecord.college_status
           }
         );
-        throw new Error('Access denied - Invalid college');
+        throw new Error('College is not active');
       }
 
       // ====================================================================
-      // Step 6: Validate password
+      // Step 3: Check user is active
+      // ====================================================================
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Checking user status`, {
+        user_id: userRecord.user_id,
+        user_status: userRecord.user_status
+      });
+
+      if (userRecord.user_status !== STATUS.ACTIVE) {
+        logger.warn(
+          `${LOG.SECURITY_PREFIX} Authentication failed - user not active`,
+          {
+            user_id: userRecord.user_id,
+            user_status: userRecord.user_status
+          }
+        );
+        throw new Error('User account is inactive');
+      }
+
+      // ====================================================================
+      // Step 4: Validate password
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Validating password`, {
-        user_id: user.user_id
+        user_id: userRecord.user_id
       });
 
       const passwordMatch = await passwordHelper.compare(
         password,
-        user.user_password
+        userRecord.user_password
       );
 
       if (!passwordMatch) {
         logger.warn(
           `${LOG.SECURITY_PREFIX} Authentication failed - invalid password`,
-          { user_id: user.user_id, email: user.user_email }
+          { user_id: userRecord.user_id, email: userRecord.user_email }
         );
         throw new Error('Invalid credentials');
       }
 
       // ====================================================================
-      // Step 7: Generate JWT token
+      // Step 5: Generate JWT token
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Generating JWT token`, {
-        user_id: user.user_id
+        user_id: userRecord.user_id
       });
 
       const userToken = jwtHelper.sign({
-        id: user.user_id,
-        role: user.user_role,
-        email: user.user_email,
-        college_id: user.college_id,
-        tenant_id: tenantRecord.tenant_id,
+        id: userRecord.user_id,
+        role: userRecord.user_role,
+        email: userRecord.user_email,
+        college_id: userRecord.college_id,
         timestamp: Date.now()
       });
 
       logger.info(
         `${LOG.TRANSACTION_PREFIX} College user authenticated successfully`,
         {
-          user_id: user.user_id,
-          role: user.user_role,
-          college_id: user.college_id,
-          tenant_id: tenantRecord.tenant_id
+          user_id: userRecord.user_id,
+          role: userRecord.user_role,
+          college_id: userRecord.college_id
         }
       );
 
       return {
         token: userToken,
         user: {
-          user_id: user.user_id,
-          user_email: user.user_email,
-          user_role: user.user_role,
-          college_id: user.college_id
+          user_id: userRecord.user_id,
+          user_email: userRecord.user_email,
+          user_role: userRecord.user_role,
+          college_id: userRecord.college_id
         },
-        tenant: {
-          tenant_id: tenantRecord.tenant_id,
-          tenant_name: tenantRecord.tenant_name
+        college: {
+          college_id: userRecord.college_id,
+          college_name: userRecord.college_name
         }
       };
 
     } catch (err) {
-      client.release();
-
       logger.error(
         `${LOG.TRANSACTION_PREFIX} College user authentication failed`,
         { error: err.message, email }

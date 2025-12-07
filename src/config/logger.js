@@ -1,40 +1,32 @@
 /**
  * ============================================================================
- * LOGGER CONFIGURATION - Winston Logger Setup
+ * LOGGER.JS - Winston Logger Configuration (OPTIMIZED)
  * ============================================================================
  * 
  * Features:
- * - Structured JSON logging for all environments
- * - Console output with colors (development)
+ * - Structured JSON logging
+ * - Console output (development)
  * - File-based logging with rotation (production)
- * - Request/Response logging
+ * - Essential logs only (optimized for performance)
  * - Error stack trace logging
  * - Log level control via environment
- * - Metadata tracking (user_id, tenant_id, IP, etc.)
  * 
  * Log Levels:
- * - error: 0 - System errors, exceptions
- * - warn: 1 - Warnings, validation failures
- * - info: 2 - API calls, successful operations
- * - debug: 3 - Detailed flow information
+ * - error: System errors, exceptions
+ * - warn: Validation failures, security issues
+ * - info: API operations, successful operations
+ * - debug: Detailed flow (development only)
  * 
- * Usage:
- * logger.error('Error message', { error: err.message, code: err.code })
- * logger.warn('Warning message', { user_id: '123' })
- * logger.info('Info message', { operation: 'user_created' })
- * logger.debug('Debug message', { variable: value })
  * ============================================================================
  */
 
 const { createLogger, format, transports } = require('winston');
-const { combine, timestamp, printf, json, colorize, errors } = format;
 const path = require('path');
 const fs = require('fs');
-
-const { LOG, LOG_LEVELS } = require('./constants');
+const { LOG } = require('./constants');
 
 // ============================================================================
-// CREATE LOGS DIRECTORY (if doesn't exist)
+// CREATE LOGS DIRECTORY
 // ============================================================================
 
 const logsDir = path.join(process.cwd(), 'logs');
@@ -48,38 +40,24 @@ if (!fs.existsSync(logsDir)) {
 // ============================================================================
 
 /**
- * Console Format (Development)
- * Human-readable format with colors
- * 
- * Example:
- * 2025-11-16T20:30:45.123Z [ERROR]: [API_ERROR] POST /users error=... user_id=...
+ * Console Format (Human-readable)
+ * Example: 2025-12-07T13:26:45.123Z [INFO]: [API_START] POST /endpoint user_id=123
  */
-const consoleFormat = printf(({ level, message, timestamp, meta, stack }) => {
-  // Build metadata string
-  const metaStr = meta && Object.keys(meta).length > 0 
+const consoleFormat = format.printf(({ level, message, timestamp, meta, stack }) => {
+  const metaStr = meta && Object.keys(meta).length > 0
     ? Object.entries(meta)
         .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
         .join(' ')
     : '';
 
-  // Add stack trace for errors
   const stackStr = stack ? `\n${stack}` : '';
 
   return `${timestamp} [${level}]: ${message} ${metaStr}${stackStr}`;
 });
 
 /**
- * JSON Format (All transports)
- * Structured JSON for easy parsing and analysis
- * 
- * Includes:
- * - timestamp
- * - level
- * - message
- * - meta (context data)
- * - stack (error stack trace)
- * - service (application name)
- * - environment
+ * JSON Format (Structured)
+ * For easy parsing and analysis
  */
 const jsonFormat = format.combine(
   format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
@@ -98,47 +76,39 @@ if (!['error', 'warn', 'info', 'debug'].includes(logLevel)) {
 }
 
 // ============================================================================
-// TRANSPORT: CONSOLE (All Environments)
+// TRANSPORTS
 // ============================================================================
 
+// Console Transport (All environments)
 const consoleTransport = new transports.Console({
   level: logLevel,
-  format: combine(
-    colorize(),
-    timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
-    errors({ stack: true }),
+  format: format.combine(
+    format.colorize(),
+    format.timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
+    format.errors({ stack: true }),
     consoleFormat
   )
 });
 
-// ============================================================================
-// TRANSPORT: ERROR LOG FILE (Production & Staging)
-// ============================================================================
-
+// Error Log File (Production & Staging)
 const errorFileTransport = new transports.File({
   filename: path.join(logsDir, 'error.log'),
   level: 'error',
   maxsize: 10485760, // 10MB
-  maxFiles: 5, // Keep 5 files
+  maxFiles: 5,
   format: jsonFormat
 });
 
-// ============================================================================
-// TRANSPORT: COMBINED LOG FILE (Production & Staging)
-// ============================================================================
-
+// Combined Log File (Production & Staging)
 const combinedFileTransport = new transports.File({
   filename: path.join(logsDir, 'combined.log'),
   level: logLevel,
   maxsize: 10485760, // 10MB
-  maxFiles: 10, // Keep 10 files
+  maxFiles: 10,
   format: jsonFormat
 });
 
-// ============================================================================
-// TRANSPORT: INFO LOG FILE (Production & Staging)
-// ============================================================================
-
+// Info Log File (Production & Staging)
 const infoFileTransport = new transports.File({
   filename: path.join(logsDir, 'info.log'),
   level: 'info',
@@ -153,13 +123,12 @@ const infoFileTransport = new transports.File({
 
 let transportsList = [consoleTransport];
 
-// Add file transports in production and staging
 if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
   transportsList = [
     consoleTransport,
-    errorFileTransport,     // ERROR level only
-    infoFileTransport,      // INFO level
-    combinedFileTransport   // ALL levels
+    errorFileTransport,
+    infoFileTransport,
+    combinedFileTransport
   ];
 }
 
@@ -169,9 +138,8 @@ if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging')
 
 const logger = createLogger({
   defaultMeta: {
-    service: process.env.SERVICE_NAME || 'college-crm-api',
-    environment: process.env.NODE_ENV || 'development',
-    version: process.env.API_VERSION || '1.0.0'
+    service: 'college-crm-api',
+    environment: process.env.NODE_ENV || 'development'
   },
   format: jsonFormat,
   transports: transportsList,
@@ -188,65 +156,6 @@ const logger = createLogger({
     })
   ]
 });
-
-// ============================================================================
-// HELPER FUNCTIONS FOR STRUCTURED LOGGING
-// ============================================================================
-
-/**
- * Log API start event
- */
-logger.apiStart = (method, endpoint, userId, ip, additionalMeta = {}) => {
-  logger.info(`${LOG.API_START_PREFIX} ${method} ${endpoint}`, {
-    user_id: userId,
-    ip: ip,
-    ...additionalMeta
-  });
-};
-
-/**
- * Log API success event
- */
-logger.apiEnd = (method, endpoint, duration, additionalMeta = {}) => {
-  logger.info(`${LOG.API_END_PREFIX} ${method} ${endpoint}`, {
-    duration_ms: duration,
-    ...additionalMeta
-  });
-};
-
-/**
- * Log API error event
- */
-logger.apiError = (method, endpoint, error, additionalMeta = {}) => {
-  logger.error(`${LOG.API_ERROR_PREFIX} ${method} ${endpoint}`, {
-    error_message: error.message,
-    error_code: error.code,
-    stack: error.stack,
-    ...additionalMeta
-  });
-};
-
-/**
- * Log transaction event
- */
-logger.transaction = (operation, status, additionalMeta = {}) => {
-  const level = status === 'start' ? 'debug' : status === 'commit' ? 'info' : 'error';
-  logger[level](`${LOG.TRANSACTION_PREFIX} ${operation} - ${status}`, additionalMeta);
-};
-
-/**
- * Log security event
- */
-logger.security = (event, level = 'warn', additionalMeta = {}) => {
-  logger[level](`${LOG.SECURITY_PREFIX} ${event}`, additionalMeta);
-};
-
-/**
- * Log validation failure
- */
-logger.validation = (event, additionalMeta = {}) => {
-  logger.warn(`${LOG.VALIDATION_PREFIX} ${event}`, additionalMeta);
-};
 
 // ============================================================================
 // EXPORT

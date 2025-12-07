@@ -3,7 +3,6 @@
  * JWT HELPER - JSON Web Token Utilities
  * ============================================================================
  * Token generation and verification with logging
- * ============================================================================
  */
 
 const jwt = require('jsonwebtoken');
@@ -13,7 +12,7 @@ const { LOG } = require('../config/constants');
 /**
  * Sign and generate JWT token
  * 
- * @param {Object} payload - Token payload
+ * @param {Object} payload - Token payload (user data)
  * @returns {string} JWT token
  * @throws {Error} If signing fails
  */
@@ -25,7 +24,7 @@ function sign(payload) {
     });
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '24h'
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
     });
 
     return token;

@@ -1,14 +1,13 @@
 /**
  * ============================================================================
- * USER CONTROLLER - User Management
+ * USER CONTROLLER - User Management (SIMPLIFIED)
  * ============================================================================
- * Handles user CRUD operations within college scope
+ * Single Database Architecture
  * - Create user (admin only)
  * - List users (admin/teacher)
  * - Get user by ID
  * - Update user (admin only)
  * - Delete user (soft delete - admin only)
- * ============================================================================
  */
 
 const userService = require('../services/userService');
@@ -25,15 +24,11 @@ const {
 /**
  * POST /api/v1/users
  * Create new user (admin only)
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function createUser(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} POST /users`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} POST /api/v1/users`, {
     user_id: req.user?.id,
     user_role: req.user?.role,
     college_id: req.user?.college_id,
@@ -73,7 +68,7 @@ async function createUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} POST /users - User created successfully`,
+      `${LOG.API_END_PREFIX} POST /api/v1/users`,
       {
         user_id: newUser.user_id,
         user_email: newUser.user_email,
@@ -95,13 +90,12 @@ async function createUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} POST /users - Error ${err}`,
+      `${LOG.API_ERROR_PREFIX} POST /api/v1/users`,
       {
         error: err.message,
         user_id: req.user?.id,
         college_id: req.user?.college_id,
-        duration_ms: duration,
-        stack: err.stack
+        duration_ms: duration
       }
     );
 
@@ -109,26 +103,22 @@ async function createUser(req, res) {
       return error(res, err.message, HTTP_STATUS.CONFLICT);
     }
 
-    if (err.message.includes('Invalid role')) {
+    if (err.message.includes('Invalid role') || err.message.includes('inactive')) {
       return error(res, err.message, HTTP_STATUS.BAD_REQUEST);
     }
 
-    return error(res, err, HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }
 
 /**
  * GET /api/v1/users
  * List all users in college with pagination
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function listUsers(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} GET /users`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} GET /api/v1/users`, {
     user_id: req.user?.id,
     user_role: req.user?.role,
     college_id: req.user?.college_id,
@@ -160,7 +150,7 @@ async function listUsers(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} GET /users - Retrieved ${result.data.length} users`,
+      `${LOG.API_END_PREFIX} GET /api/v1/users`,
       {
         total: result.pagination.total,
         page: page,
@@ -181,7 +171,7 @@ async function listUsers(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} GET /users - Error ${err}`,
+      `${LOG.API_ERROR_PREFIX} GET /api/v1/users`,
       {
         error: err.message,
         college_id: req.user?.college_id,
@@ -196,15 +186,11 @@ async function listUsers(req, res) {
 /**
  * GET /api/v1/users/:userId
  * Get single user by ID
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function getUser(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} GET /users/:userId`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} GET /api/v1/users/:userId`, {
     user_id: req.params.userId,
     requested_by: req.user?.id,
     college_id: req.user?.college_id
@@ -231,7 +217,7 @@ async function getUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} GET /users/:userId - Retrieved successfully`,
+      `${LOG.API_END_PREFIX} GET /api/v1/users/:userId`,
       {
         user_id: user.user_id,
         college_id: req.user.college_id,
@@ -245,7 +231,7 @@ async function getUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} GET /users/:userId - Error`,
+      `${LOG.API_ERROR_PREFIX} GET /api/v1/users/:userId`,
       {
         error: err.message,
         target_user: req.params.userId,
@@ -265,15 +251,11 @@ async function getUser(req, res) {
 /**
  * PUT /api/v1/users/:userId
  * Update user (admin only)
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function updateUser(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} PUT /users/:userId`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} PUT /api/v1/users/:userId`, {
     user_id: req.params.userId,
     updated_by: req.user?.id,
     college_id: req.user?.college_id,
@@ -302,7 +284,7 @@ async function updateUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} PUT /users/:userId - Updated successfully`,
+      `${LOG.API_END_PREFIX} PUT /api/v1/users/:userId`,
       {
         user_id: updatedUser.user_id,
         college_id: req.user.college_id,
@@ -317,7 +299,7 @@ async function updateUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} PUT /users/:userId - Error`,
+      `${LOG.API_ERROR_PREFIX} PUT /api/v1/users/:userId`,
       {
         error: err.message,
         target_user: req.params.userId,
@@ -341,15 +323,11 @@ async function updateUser(req, res) {
 /**
  * DELETE /api/v1/users/:userId
  * Soft delete user (set status to inactive - admin only)
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function deleteUser(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} DELETE /users/:userId`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} DELETE /api/v1/users/:userId`, {
     user_id: req.params.userId,
     deleted_by: req.user?.id,
     college_id: req.user?.college_id
@@ -376,7 +354,7 @@ async function deleteUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} DELETE /users/:userId - User deactivated successfully`,
+      `${LOG.API_END_PREFIX} DELETE /api/v1/users/:userId`,
       {
         user_id: req.params.userId,
         college_id: req.user.college_id,
@@ -391,7 +369,7 @@ async function deleteUser(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} DELETE /users/:userId - Error`,
+      `${LOG.API_ERROR_PREFIX} DELETE /api/v1/users/:userId`,
       {
         error: err.message,
         target_user: req.params.userId,

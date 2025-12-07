@@ -1,13 +1,13 @@
 /**
  * ============================================================================
- * USER ROUTES
+ * USER ROUTES - User Management API
  * ============================================================================
- * User management API endpoints with:
- * - Authentication middleware
- * - Role-based authorization
- * - Request validation
- * - Rate limiting
- * ============================================================================
+ * Single Database Architecture
+ * - POST /users - Create user (admin only)
+ * - GET /users - List users (admin/teacher)
+ * - GET /users/:userId - Get user
+ * - PUT /users/:userId - Update user (admin only)
+ * - DELETE /users/:userId - Delete user (admin only)
  */
 
 const express = require('express');

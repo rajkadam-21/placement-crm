@@ -1,9 +1,8 @@
 /**
  * ============================================================================
- * AUTH VALIDATORS
+ * AUTH VALIDATORS - Request Validation Schemas
  * ============================================================================
- * Request validation schemas for auth API
- * ============================================================================
+ * Joi schemas for authentication API endpoints
  */
 
 const Joi = require('joi');

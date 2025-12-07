@@ -1,9 +1,21 @@
+/**
+ * ============================================================================
+ * ENV.JS - Environment Configuration
+ * ============================================================================
+ * Loads environment variables and provides configuration
+ * 
+ * Single Database Architecture:
+ * - DATABASE_URL: Main PostgreSQL connection string
+ * - No multi-tenant database URLs needed
+ * ============================================================================
+ */
+
 const dotenv = require('dotenv');
 const path = require('path');
 
 dotenv.config({
-  path: process.env.NODE_ENV === 'production' 
-    ? '.env' 
+  path: process.env.NODE_ENV === 'production'
+    ? '.env'
     : path.resolve(process.cwd(), '.env')
 });
 

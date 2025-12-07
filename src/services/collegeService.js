@@ -1,13 +1,12 @@
 /**
  * ============================================================================
- * COLLEGE SERVICE - College Management
+ * COLLEGE SERVICE - College Management (SIMPLIFIED)
  * ============================================================================
- * Handles college CRUD operations
- * - Create college (verify tenant exists)
- * - Get all colleges
- * - Get college by ID
- * - Update college
- * ============================================================================
+ * Single Database Architecture
+ * - All colleges in one shared database
+ * - No tenant references needed
+ * - Direct college CRUD operations
+ * - Dynamic feature management via enabled_features JSONB
  */
 
 const { getMainPool } = require('../config/db');
@@ -22,18 +21,15 @@ const {
 
 class CollegeService {
   /**
-   * Creates new college linked to existing tenant
+   * Creates new college with admin user
+   * enabled_features defaults to ["core"]
    * 
-   * RULE 1: colleges table exists only in main database
-   * Use: getMainPool()
-   * 
-   * @param {Object} data - { tenant_id, college_name, college_subdomain, admin_name, admin_email, admin_password }
+   * @param {Object} data - { college_name, college_subdomain, admin_name, admin_email, admin_password }
    * @returns {Object} { college, admin, portal_url, note }
-   * @throws {Error} If tenant not found or validation fails
+   * @throws {Error} If validation fails
    */
   async create(data) {
     const {
-      tenant_id,
       college_name,
       college_subdomain,
       admin_name,
@@ -47,45 +43,13 @@ class CollegeService {
     try {
       logger.debug(
         `${LOG.TRANSACTION_PREFIX} Starting college creation transaction`,
-        { tenant_id, college_name }
+        { college_name }
       );
 
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
 
       // ====================================================================
-      // Step 1: Verify tenant exists
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Verifying tenant exists`, {
-        tenant_id
-      });
-
-      const tenantCheckQuery = `
-        SELECT tenant_id, tenant_name, db_url, status
-        FROM tenants
-        WHERE tenant_id = $1
-        AND status = $2
-        LIMIT 1
-      `;
-
-      const tenantCheckResult = await client.query(tenantCheckQuery, [
-        tenant_id,
-        STATUS.ACTIVE
-      ]);
-
-      if (!tenantCheckResult.rows.length) {
-        await client.query('ROLLBACK');
-        throw new Error(`Tenant ${tenant_id} not found or inactive`);
-      }
-
-      const tenant = tenantCheckResult.rows[0];
-
-      logger.debug(
-        `${LOG.TRANSACTION_PREFIX} Tenant verified`,
-        { tenant_id: tenant.tenant_id, tenant_name: tenant.tenant_name }
-      );
-
-      // ====================================================================
-      // Step 2: Check subdomain uniqueness
+      // Step 1: Check subdomain uniqueness
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Checking subdomain uniqueness`, {
         subdomain: college_subdomain
@@ -107,7 +71,7 @@ class CollegeService {
       }
 
       // ====================================================================
-      // Step 3: Create college record
+      // Step 2: Create college record with default features
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Creating college record`, {
         college_name
@@ -115,21 +79,21 @@ class CollegeService {
 
       const collegeInsertQuery = `
         INSERT INTO colleges (
-          tenant_id,
           college_name,
           college_subdomain,
           college_status,
+          enabled_features,
           created_at
         )
         VALUES ($1, $2, $3, $4, NOW())
-        RETURNING college_id, tenant_id, college_name, college_subdomain, college_status, created_at
+        RETURNING college_id, college_name, college_subdomain, college_status, enabled_features, created_at
       `;
 
       const collegeResult = await client.query(collegeInsertQuery, [
-        tenant_id,
         college_name,
         college_subdomain,
-        STATUS.ACTIVE
+        STATUS.ACTIVE,
+        JSON.stringify(['core']) // Default: only core features
       ]);
 
       const college = collegeResult.rows[0];
@@ -140,14 +104,14 @@ class CollegeService {
       );
 
       // ====================================================================
-      // Step 4: Hash password
+      // Step 3: Hash admin password
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Hashing admin password`);
 
       const hashedPassword = await passwordHelper.hashPassword(admin_password);
 
       // ====================================================================
-      // Step 5: Create admin user
+      // Step 4: Create admin user
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Creating admin user`, {
         college_id: college.college_id,
@@ -185,16 +149,16 @@ class CollegeService {
       );
 
       // ====================================================================
-      // Step 6: Commit transaction
+      // Step 5: Commit transaction
       // ====================================================================
       await client.query('COMMIT');
 
       logger.info(
-        `${LOG.TRANSACTION_PREFIX} College creation transaction committed successfully`,
+        `${LOG.TRANSACTION_PREFIX} College creation transaction committed`,
         {
           college_id: college.college_id,
-          tenant_id: college.tenant_id,
-          admin_user_id: adminUser.user_id
+          admin_user_id: adminUser.user_id,
+          enabled_features: college.enabled_features
         }
       );
 
@@ -215,11 +179,10 @@ class CollegeService {
       await client.query('ROLLBACK');
 
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} College creation failed - transaction rolled back`,
+        `${LOG.TRANSACTION_PREFIX} College creation failed - rolled back`,
         {
           error: err.message,
-          code: err.code,
-          tenant_id
+          code: err.code
         }
       );
 
@@ -230,10 +193,6 @@ class CollegeService {
         if (err.constraint && err.constraint.includes('email')) {
           throw new Error('Admin email already exists');
         }
-      }
-
-      if (err.code === DB_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
-        throw new Error('Invalid tenant reference');
       }
 
       throw err;
@@ -258,22 +217,20 @@ class CollegeService {
       // Count total
       const countQuery = `SELECT COUNT(*) as total FROM colleges`;
       const countResult = await mainPool.query(countQuery);
-      const total = parseInt(countResult.rows.total);
+      const total = parseInt(countResult.rows[0].total);
 
       // Fetch colleges
       const query = `
         SELECT
-          c.college_id,
-          c.tenant_id,
-          c.college_name,
-          c.college_subdomain,
-          c.college_status,
-          c.created_at,
-          c.updated_at,
-          t.tenant_name
-        FROM colleges c
-        JOIN tenants t ON c.tenant_id = t.tenant_id
-        ORDER BY c.created_at DESC
+          college_id,
+          college_name,
+          college_subdomain,
+          college_status,
+          enabled_features,
+          created_at,
+          updated_at
+        FROM colleges
+        ORDER BY created_at DESC
         LIMIT $1
         OFFSET $2
       `;
@@ -311,7 +268,7 @@ class CollegeService {
   /**
    * Get single college by ID
    * 
-   * @param {number} collegeId - College ID
+   * @param {string} collegeId - College ID
    * @returns {Object} College data
    * @throws {Error} If not found
    */
@@ -320,17 +277,15 @@ class CollegeService {
 
     const query = `
       SELECT
-        c.college_id,
-        c.tenant_id,
-        c.college_name,
-        c.college_subdomain,
-        c.college_status,
-        c.created_at,
-        c.updated_at,
-        t.tenant_name
-      FROM colleges c
-      JOIN tenants t ON c.tenant_id = t.tenant_id
-      WHERE c.college_id = $1
+        college_id,
+        college_name,
+        college_subdomain,
+        college_status,
+        enabled_features,
+        created_at,
+        updated_at
+      FROM colleges
+      WHERE college_id = $1
       LIMIT 1
     `;
 
@@ -349,9 +304,10 @@ class CollegeService {
   }
 
   /**
-   * Update college
+   * Update college (name, subdomain, status)
+   * Does not modify enabled_features
    * 
-   * @param {number} collegeId - College ID
+   * @param {string} collegeId - College ID
    * @param {Object} data - { college_name, college_subdomain, college_status }
    * @returns {Object} Updated college
    * @throws {Error} If not found
@@ -381,7 +337,7 @@ class CollegeService {
         throw new Error('College not found');
       }
 
-      // Update college
+      // Update college (excluding enabled_features)
       const updateQuery = `
         UPDATE colleges
         SET
@@ -390,7 +346,7 @@ class CollegeService {
           college_status = COALESCE($3, college_status),
           updated_at = NOW()
         WHERE college_id = $4
-        RETURNING college_id, tenant_id, college_name, college_subdomain, college_status, created_at, updated_at
+        RETURNING college_id, college_name, college_subdomain, college_status, enabled_features, created_at, updated_at
       `;
 
       const updateResult = await client.query(updateQuery, [
@@ -407,14 +363,93 @@ class CollegeService {
         { college_id: collegeId }
       );
 
-      return updateResult.rows;
+      return updateResult.rows[0];
 
     } catch (err) {
       await client.query('ROLLBACK');
 
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} College update failed - transaction rolled back`,
+        `${LOG.TRANSACTION_PREFIX} College update failed - rolled back`,
         { error: err.message }
+      );
+
+      throw err;
+
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Update college enabled features
+   * Core feature is mandatory and cannot be removed
+   * 
+   * @param {string} collegeId - College ID
+   * @param {Array} enabledFeatures - Array of feature keys (must include "core")
+   * @returns {Object} Updated college
+   * @throws {Error} If not found or core feature missing
+   */
+  async updateFeatures(collegeId, enabledFeatures) {
+    const mainPool = getMainPool();
+    const client = await mainPool.connect();
+
+    try {
+      logger.debug(
+        `${LOG.TRANSACTION_PREFIX} Starting college features update`,
+        {
+          college_id: collegeId,
+          enabled_features: enabledFeatures
+        }
+      );
+
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+
+      // Verify college exists
+      const checkQuery = `
+        SELECT college_id FROM colleges
+        WHERE college_id = $1
+        LIMIT 1
+      `;
+
+      const checkResult = await client.query(checkQuery, [collegeId]);
+
+      if (!checkResult.rows.length) {
+        await client.query('ROLLBACK');
+        throw new Error('College not found');
+      }
+
+      // Update enabled_features
+      const updateQuery = `
+        UPDATE colleges
+        SET enabled_features = $1::jsonb,
+            updated_at = NOW()
+        WHERE college_id = $2
+        RETURNING college_id, college_name, college_subdomain, college_status, enabled_features, created_at, updated_at
+      `;
+
+      const updateResult = await client.query(updateQuery, [
+        JSON.stringify(enabledFeatures),
+        collegeId
+      ]);
+
+      await client.query('COMMIT');
+
+      logger.info(
+        `${LOG.TRANSACTION_PREFIX} College features updated successfully`,
+        {
+          college_id: collegeId,
+          enabled_features: enabledFeatures
+        }
+      );
+
+      return updateResult.rows[0];
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+
+      logger.error(
+        `${LOG.TRANSACTION_PREFIX} College features update failed - rolled back`,
+        { error: err.message, college_id: collegeId }
       );
 
       throw err;

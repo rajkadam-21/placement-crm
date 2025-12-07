@@ -1,14 +1,12 @@
 /**
  * ============================================================================
- * AUTH CONTROLLER - User Authentication Management
+ * AUTH CONTROLLER - User Authentication Management (SIMPLIFIED)
  * ============================================================================
- * Handles HTTP requests and responses:
- * - Authorization checks (via middleware)
- * - Request validation (via validate middleware)
- * - API logging (start, end, error)
- * - Response formatting
- * - Calls AuthService for business logic
- * ============================================================================
+ * Single Database Architecture
+ * - System admin login
+ * - College user login
+ * - Token verification
+ * - Logout endpoint
  */
 
 const authService = require('../services/authService');
@@ -26,17 +24,12 @@ const {
 /**
  * POST /api/v1/auth/login
  * System admin and college user login
- * 
- * @param {Object} req - Express request
- * @param {Object} res - Express response
  */
 async function login(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} POST /auth/login`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
-    ip: req.ip,
-    tenant_id: req.tenant?.tenant_id || 'main'
+  logger.info(`${LOG.API_START_PREFIX} POST /api/v1/auth/login`, {
+    ip: req.ip
   });
 
   try {
@@ -57,7 +50,7 @@ async function login(req, res) {
       const duration = Date.now() - startTime;
 
       logger.info(
-        `${LOG.API_END_PREFIX} POST /auth/login - System admin login successful`,
+        `${LOG.API_END_PREFIX} POST /api/v1/auth/login`,
         {
           email: email,
           role: ROLES.SYSADMIN,
@@ -80,25 +73,20 @@ async function login(req, res) {
     }
 
     // ====================================================================
-    // Step 2: Authenticate college user (service handles RULE 2)
+    // Step 2: Authenticate college user
     // ====================================================================
     logger.debug(`${LOG.TRANSACTION_PREFIX} Authenticating college user`);
 
-    const authResult = await authService.authenticateCollegeUser(
-      email,
-      password,
-      req.tenant
-    );
+    const authResult = await authService.authenticateCollegeUser(email, password);
 
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} POST /auth/login - User login successful`,
+      `${LOG.API_END_PREFIX} POST /api/v1/auth/login`,
       {
         user_id: authResult.user.user_id,
         role: authResult.user.user_role,
         college_id: authResult.user.college_id,
-        tenant_id: authResult.tenant.tenant_id,
         email: authResult.user.user_email,
         ip: req.ip,
         duration_ms: duration
@@ -122,50 +110,37 @@ async function login(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} POST /auth/login - Error`,
+      `${LOG.API_ERROR_PREFIX} POST /api/v1/auth/login`,
       {
         error: err.message,
         ip: req.ip,
-        duration_ms: duration,
-        stack: err.stack
+        duration_ms: duration
       }
     );
 
-    // Handle specific errors
-    if (err.message.includes('Invalid credentials') || 
+    if (err.message.includes('Invalid credentials') ||
         err.message.includes('not found') ||
-        err.message.includes('inactive')) {
-      return error(
-        res,
-        err.message,
-        HTTP_STATUS.UNAUTHORIZED
-      );
+        err.message.includes('inactive') ||
+        err.message.includes('not active')) {
+      return error(res, 'Invalid email or password', HTTP_STATUS.UNAUTHORIZED);
     }
 
     if (err.message.includes('Access denied')) {
       return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
     }
 
-    return error(
-      res,
-      ERROR_MESSAGES.SERVER_ERROR,
-      HTTP_STATUS.INTERNAL_SERVER_ERROR
-    );
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }
 
 /**
  * POST /api/v1/auth/logout
  * Logout user (stateless JWT - optional endpoint)
- * 
- * @param {Object} req - Express request (authenticated)
- * @param {Object} res - Express response
  */
 async function logout(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} POST /auth/logout`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} POST /api/v1/auth/logout`, {
     user_id: req.user?.id,
     user_role: req.user?.role,
     ip: req.ip
@@ -175,7 +150,7 @@ async function logout(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} POST /auth/logout - Logout successful`,
+      `${LOG.API_END_PREFIX} POST /api/v1/auth/logout`,
       {
         user_id: req.user?.id,
         duration_ms: duration
@@ -193,7 +168,7 @@ async function logout(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} POST /auth/logout - Error`,
+      `${LOG.API_ERROR_PREFIX} POST /api/v1/auth/logout`,
       {
         error: err.message,
         user_id: req.user?.id,
@@ -201,26 +176,18 @@ async function logout(req, res) {
       }
     );
 
-    return error(
-      res,
-      ERROR_MESSAGES.SERVER_ERROR,
-      HTTP_STATUS.INTERNAL_SERVER_ERROR
-    );
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }
 
 /**
  * GET /api/v1/auth/verify
  * Verify current token validity
- * 
- * @param {Object} req - Express request (authenticated)
- * @param {Object} res - Express response
  */
 async function verifyToken(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} GET /auth/verify`;
   const startTime = Date.now();
 
-  logger.info(requestId, {
+  logger.info(`${LOG.API_START_PREFIX} GET /api/v1/auth/verify`, {
     user_id: req.user?.id,
     user_role: req.user?.role
   });
@@ -231,7 +198,7 @@ async function verifyToken(req, res) {
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} GET /auth/verify - Token verified`,
+      `${LOG.API_END_PREFIX} GET /api/v1/auth/verify`,
       {
         user_id: user?.id,
         duration_ms: duration
@@ -245,7 +212,6 @@ async function verifyToken(req, res) {
         role: user.role,
         email: user.email,
         college_id: user.college_id || null,
-        tenant_id: user.tenant_id || null,
         type: user.id === AUTH.SYSTEM_ADMIN_ID ? 'sysadmin' : 'college_user'
       },
       'Token is valid',
@@ -256,18 +222,14 @@ async function verifyToken(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} GET /auth/verify - Error`,
+      `${LOG.API_ERROR_PREFIX} GET /api/v1/auth/verify`,
       {
         error: err.message,
         duration_ms: duration
       }
     );
 
-    return error(
-      res,
-      ERROR_MESSAGES.SERVER_ERROR,
-      HTTP_STATUS.INTERNAL_SERVER_ERROR
-    );
+    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }
 

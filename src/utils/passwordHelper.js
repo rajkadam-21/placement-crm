@@ -2,8 +2,7 @@
  * ============================================================================
  * PASSWORD HELPER - Password Hashing & Verification
  * ============================================================================
- * Secure password handling with bcrypt and logging
- * ============================================================================
+ * Secure password handling with bcrypt
  */
 
 const bcrypt = require('bcrypt');

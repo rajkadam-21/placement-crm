@@ -1,23 +1,17 @@
 /**
  * ============================================================================
- * USER SERVICE - User Management
+ * USER SERVICE - User Management (SIMPLIFIED)
  * ============================================================================
- * Handles user CRUD operations within college scope
+ * Single Database Architecture
  * - Create user with password hashing
  * - Get all users with pagination
  * - Get user by ID
  * - Update user
  * - Soft delete user
- * 
- * RULE 2 IMPLEMENTATION:
- * Step 1: Get tenant info from colleges table (use getMainPool)
- * Step 2: Get tenant record to get db_url (if separate DB)
- * Step 3: Get pool for this tenant (use getPoolForTenant)
- * Step 4: Query users table using tenant's pool
- * ============================================================================
+ * - Status checks: college active, user active
  */
 
-const { getMainPool, getPoolForTenant } = require('../config/db');
+const { getMainPool } = require('../config/db');
 const passwordHelper = require('../utils/passwordHelper');
 const logger = require('../config/logger');
 const {
@@ -31,11 +25,11 @@ class UserService {
   /**
    * Creates new user in college
    * 
-   * RULE 2: Users table belongs to college/tenant
-   * Step 1: Get tenant info from colleges table (mainPool - RULE 1)
-   * Step 2: Get tenant record to get db_url
-   * Step 3: Get pool for that tenant
-   * Step 4: Create user using tenant's pool
+   * Single Database:
+   * 1. Verify college is active
+   * 2. Hash password
+   * 3. Check email uniqueness
+   * 4. Create user
    * 
    * @param {Object} data - { college_id, user_name, user_email, user_password, user_role }
    * @returns {Object} Created user (without password)
@@ -51,7 +45,7 @@ class UserService {
     } = data;
 
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
+    const client = await mainPool.connect();
 
     try {
       logger.debug(
@@ -59,15 +53,17 @@ class UserService {
         { college_id, user_email, user_role }
       );
 
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+
       // ====================================================================
-      // Step 1: Get tenant info from colleges table (RULE 1)
+      // Step 1: Verify college exists and is active
       // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching college and tenant info`, {
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Verifying college status`, {
         college_id
       });
 
       const collegeQuery = `
-        SELECT college_id, tenant_id, college_status
+        SELECT college_id, college_status
         FROM colleges
         WHERE college_id = $1
         LIMIT 1
@@ -76,90 +72,39 @@ class UserService {
       const collegeResult = await client.query(collegeQuery, [college_id]);
 
       if (!collegeResult.rows.length) {
-        client.release();
+        await client.query('ROLLBACK');
         throw new Error('College not found');
       }
 
       const college = collegeResult.rows[0];
 
       if (college.college_status !== STATUS.ACTIVE) {
-        client.release();
+        await client.query('ROLLBACK');
         throw new Error('College is inactive');
       }
 
       // ====================================================================
-      // Step 2: Get tenant record to get db_url (RULE 1)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching tenant record`, {
-        tenant_id: college.tenant_id
-      });
-
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url, status
-        FROM tenants
-        WHERE tenant_id = $1
-        AND status = $2
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [
-        college.tenant_id,
-        STATUS.ACTIVE
-      ]);
-
-      if (!tenantResult.rows.length) {
-        client.release();
-        throw new Error('Tenant not found or inactive');
-      }
-
-      const tenant = tenantResult.rows;
-
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Tenant verified`, {
-        tenant_id: tenant.tenant_id,
-        has_separate_db: !!tenant.db_url
-      });
-
-      // client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for this tenant (RULE 2)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Getting tenant pool`, {
-        tenant_id: tenant.tenant_id
-      });
-
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenant.tenant_id,
-        tenant_name: tenant.tenant_name,
-        db_url: tenant.db_url
-      });
-
-      client = await tenantPool.connect();
-
-      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
-
-      // ====================================================================
-      // Step 4: Validate user role
+      // Step 2: Validate user role
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Validating user role`, {
         user_role
       });
 
-      const validRoles = [ROLES.ADMIN, ROLES.TEACHER, 'other'];
+      const validRoles = [ROLES.ADMIN, ROLES.TEACHER, 'student', 'other'];
       if (!validRoles.includes(user_role)) {
         await client.query('ROLLBACK');
-        throw new Error(`Invalid user role: ${user_role}`);
+        throw new Error(`Invalid role: ${user_role}`);
       }
 
       // ====================================================================
-      // Step 5: Hash password
+      // Step 3: Hash password
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Hashing user password`);
 
       const hashedPassword = await passwordHelper.hashPassword(user_password);
 
       // ====================================================================
-      // Step 6: Check email uniqueness
+      // Step 4: Check email uniqueness
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Checking email uniqueness`, {
         user_email
@@ -179,7 +124,7 @@ class UserService {
       }
 
       // ====================================================================
-      // Step 7: Create user (RULE 2 - using tenant pool)
+      // Step 5: Create user
       // ====================================================================
       logger.debug(`${LOG.TRANSACTION_PREFIX} Creating user record`, {
         college_id,
@@ -211,7 +156,7 @@ class UserService {
 
       await client.query('COMMIT');
 
-      const user = userResult.rows;
+      const user = userResult.rows[0];
 
       logger.info(
         `${LOG.TRANSACTION_PREFIX} User created successfully`,
@@ -219,8 +164,7 @@ class UserService {
           user_id: user.user_id,
           college_id: user.college_id,
           user_email: user.user_email,
-          user_role: user.user_role,
-          tenant_id: tenant.tenant_id
+          user_role: user.user_role
         }
       );
 
@@ -237,7 +181,7 @@ class UserService {
       }
 
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} User creation failed - transaction rolled back ${err}`,
+        `${LOG.TRANSACTION_PREFIX} User creation failed`,
         {
           error: err.message,
           code: err.code,
@@ -263,8 +207,6 @@ class UserService {
   /**
    * Get all users in college with pagination
    * 
-   * RULE 2: Get tenant info first, then use tenant pool
-   * 
    * @param {string} collegeId - College ID
    * @param {number} page - Page number
    * @param {number} limit - Items per page
@@ -272,85 +214,30 @@ class UserService {
    */
   async list(collegeId, page = 1, limit = 20) {
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
     const offset = (page - 1) * limit;
 
     try {
-      // ====================================================================
-      // Step 1: Get tenant info from colleges table (RULE 1)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching college tenant info`, {
-        college_id: collegeId
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Listing users`, {
+        college_id: collegeId,
+        page,
+        limit
       });
 
-      const collegeQuery = `
-        SELECT college_id, tenant_id FROM colleges
-        WHERE college_id = $1
-        LIMIT 1
-      `;
-
-      const collegeResult = await client.query(collegeQuery, [collegeId]);
-
-      if (!collegeResult.rows.length) {
-        client.release();
-        throw new Error('College not found');
-      }
-
-      const college = collegeResult.rows[0];
-
-      // ====================================================================
-      // Step 2: Get tenant record to get db_url (RULE 1)
-      // ====================================================================
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching tenant record`, {
-        tenant_id: college.tenant_id
-      });
-
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url, status
-        FROM tenants
-        WHERE tenant_id = $1
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [college.tenant_id]);
-
-      if (!tenantResult.rows.length) {
-        client.release();
-        throw new Error('Tenant not found');
-      }
-
-      const tenant = tenantResult.rows[0];
-
-      // client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for this tenant (RULE 2)
-      // ====================================================================
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenant.tenant_id,
-        tenant_name: tenant.tenant_name,
-        db_url: tenant.db_url
-      });
-
-      // ====================================================================
-      // Step 4: Count total users (RULE 2 - using tenant pool)
-      // ====================================================================
+      // Count total active users
       const countQuery = `
         SELECT COUNT(*) as total FROM users
         WHERE college_id = $1
         AND user_status = $2
       `;
 
-      const countResult = await tenantPool.query(countQuery, [
+      const countResult = await mainPool.query(countQuery, [
         collegeId,
         STATUS.ACTIVE
       ]);
 
-      const total = parseInt(countResult.rows.total);
+      const total = parseInt(countResult.rows[0].total);
 
-      // ====================================================================
-      // Step 5: Fetch users with pagination (RULE 2 - using tenant pool)
-      // ====================================================================
+      // Fetch users
       const query = `
         SELECT
           user_id,
@@ -368,7 +255,7 @@ class UserService {
         OFFSET $4
       `;
 
-      const { rows } = await tenantPool.query(query, [
+      const { rows } = await mainPool.query(query, [
         collegeId,
         STATUS.ACTIVE,
         limit,
@@ -376,10 +263,9 @@ class UserService {
       ]);
 
       logger.debug(
-        `${LOG.TRANSACTION_PREFIX} Users listed`,
+        `${LOG.TRANSACTION_PREFIX} Users listed successfully`,
         {
           college_id: collegeId,
-          tenant_id: tenant.tenant_id,
           total_count: total,
           returned_count: rows.length,
           page
@@ -398,23 +284,18 @@ class UserService {
 
     } catch (err) {
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} User list failed ${err}`,
+        `${LOG.TRANSACTION_PREFIX} User list failed`,
         {
           error: err.message,
           college_id: collegeId
         }
       );
       throw err;
-
-    } finally {
-      client.release();
     }
   }
 
   /**
    * Get single user by ID within college
-   * 
-   * RULE 2: Get tenant info first, then use tenant pool
    * 
    * @param {string} userId - User ID
    * @param {string} collegeId - College ID (for isolation)
@@ -423,60 +304,13 @@ class UserService {
    */
   async getById(userId, collegeId) {
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
 
     try {
-      // ====================================================================
-      // Step 1: Get tenant info from colleges table (RULE 1)
-      // ====================================================================
-      const collegeQuery = `
-        SELECT college_id, tenant_id FROM colleges
-        WHERE college_id = $1
-        LIMIT 1
-      `;
-
-      const collegeResult = await client.query(collegeQuery, [collegeId]);
-
-      if (!collegeResult.rows.length) {
-        client.release();
-        throw new Error('College not found');
-      }
-
-      const college = collegeResult.rows;
-
-      // ====================================================================
-      // Step 2: Get tenant record (RULE 1)
-      // ====================================================================
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url
-        FROM tenants
-        WHERE tenant_id = $1
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [college.tenant_id]);
-
-      if (!tenantResult.rows.length) {
-        client.release();
-        throw new Error('Tenant not found');
-      }
-
-      const tenant = tenantResult.rows;
-
-      client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for this tenant (RULE 2)
-      // ====================================================================
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenant.tenant_id,
-        tenant_name: tenant.tenant_name,
-        db_url: tenant.db_url
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Fetching user by ID`, {
+        user_id: userId,
+        college_id: collegeId
       });
 
-      // ====================================================================
-      // Step 4: Query user (RULE 2 - using tenant pool)
-      // ====================================================================
       const query = `
         SELECT
           user_id,
@@ -493,7 +327,7 @@ class UserService {
         LIMIT 1
       `;
 
-      const { rows } = await tenantPool.query(query, [
+      const { rows } = await mainPool.query(query, [
         userId,
         collegeId,
         STATUS.ACTIVE
@@ -504,15 +338,14 @@ class UserService {
       }
 
       logger.debug(
-        `${LOG.TRANSACTION_PREFIX} User retrieved`,
+        `${LOG.TRANSACTION_PREFIX} User retrieved successfully`,
         {
           user_id: userId,
-          college_id: collegeId,
-          tenant_id: tenant.tenant_id
+          college_id: collegeId
         }
       );
 
-      return rows;
+      return rows[0];
 
     } catch (err) {
       logger.error(
@@ -524,16 +357,11 @@ class UserService {
         }
       );
       throw err;
-
-    } finally {
-      client.release();
     }
   }
 
   /**
    * Update user within college
-   * 
-   * RULE 2: Get tenant info first, then use tenant pool
    * 
    * @param {string} userId - User ID
    * @param {string} collegeId - College ID (for isolation)
@@ -543,7 +371,7 @@ class UserService {
    */
   async update(userId, collegeId, data) {
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
+    const client = await mainPool.connect();
 
     try {
       logger.debug(
@@ -551,61 +379,16 @@ class UserService {
         { user_id: userId, college_id: collegeId }
       );
 
-      // ====================================================================
-      // Step 1: Get tenant info from colleges table (RULE 1)
-      // ====================================================================
-      const collegeQuery = `
-        SELECT college_id, tenant_id FROM colleges
-        WHERE college_id = $1
-        LIMIT 1
-      `;
-
-      const collegeResult = await client.query(collegeQuery, [collegeId]);
-
-      if (!collegeResult.rows.length) {
-        client.release();
-        throw new Error('College not found');
-      }
-
-      const college = collegeResult.rows[0];
-
-      // ====================================================================
-      // Step 2: Get tenant record (RULE 1)
-      // ====================================================================
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url
-        FROM tenants
-        WHERE tenant_id = $1
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [college.tenant_id]);
-
-      if (!tenantResult.rows.length) {
-        client.release();
-        throw new Error('Tenant not found');
-      }
-
-      const tenant = tenantResult.rows;
-
-      client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for this tenant (RULE 2)
-      // ====================================================================
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenant.tenant_id,
-        tenant_name: tenant.tenant_name,
-        db_url: tenant.db_url
-      });
-
-      client = await tenantPool.connect();
-
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
 
       // ====================================================================
-      // Step 4: Verify user exists and belongs to college (RULE 2)
+      // Step 1: Verify user exists and belongs to college
       // ====================================================================
+      logger.debug(`${LOG.TRANSACTION_PREFIX} Verifying user access`, {
+        user_id: userId,
+        college_id: collegeId
+      });
+
       const checkQuery = `
         SELECT user_id, college_id FROM users
         WHERE user_id = $1
@@ -621,18 +404,18 @@ class UserService {
       }
 
       // ====================================================================
-      // Step 5: Validate role if provided
+      // Step 2: Validate role if provided
       // ====================================================================
       if (data.user_role) {
-        const validRoles = [ROLES.ADMIN, ROLES.TEACHER, 'other'];
+        const validRoles = [ROLES.ADMIN, ROLES.TEACHER, 'student', 'other'];
         if (!validRoles.includes(data.user_role)) {
           await client.query('ROLLBACK');
-          throw new Error(`Invalid user role: ${data.user_role}`);
+          throw new Error(`Invalid role: ${data.user_role}`);
         }
       }
 
       // ====================================================================
-      // Step 6: Update user (RULE 2 - using tenant pool)
+      // Step 3: Update user
       // ====================================================================
       const updateQuery = `
         UPDATE users
@@ -660,12 +443,11 @@ class UserService {
         `${LOG.TRANSACTION_PREFIX} User updated successfully`,
         {
           user_id: userId,
-          college_id: collegeId,
-          tenant_id: tenant.tenant_id
+          college_id: collegeId
         }
       );
 
-      return updateResult.rows;
+      return updateResult.rows[0];
 
     } catch (err) {
       try {
@@ -678,7 +460,7 @@ class UserService {
       }
 
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} User update failed - transaction rolled back ${err}`,
+        `${LOG.TRANSACTION_PREFIX} User update failed`,
         {
           error: err.message,
           user_id: userId,
@@ -696,15 +478,13 @@ class UserService {
   /**
    * Soft delete user (set status to inactive)
    * 
-   * RULE 2: Get tenant info first, then use tenant pool
-   * 
    * @param {string} userId - User ID
    * @param {string} collegeId - College ID (for isolation)
    * @throws {Error} If not found
    */
   async delete(userId, collegeId) {
     const mainPool = getMainPool();
-    let client = await mainPool.connect();
+    const client = await mainPool.connect();
 
     try {
       logger.debug(
@@ -712,60 +492,10 @@ class UserService {
         { user_id: userId, college_id: collegeId }
       );
 
-      // ====================================================================
-      // Step 1: Get tenant info from colleges table (RULE 1)
-      // ====================================================================
-      const collegeQuery = `
-        SELECT college_id, tenant_id FROM colleges
-        WHERE college_id = $1
-        LIMIT 1
-      `;
-
-      const collegeResult = await client.query(collegeQuery, [collegeId]);
-
-      if (!collegeResult.rows.length) {
-        client.release();
-        throw new Error('College not found');
-      }
-
-      const college = collegeResult.rows[0];
-
-      // ====================================================================
-      // Step 2: Get tenant record (RULE 1)
-      // ====================================================================
-      const tenantQuery = `
-        SELECT tenant_id, tenant_name, db_url
-        FROM tenants
-        WHERE tenant_id = $1
-        LIMIT 1
-      `;
-
-      const tenantResult = await client.query(tenantQuery, [college.tenant_id]);
-
-      if (!tenantResult.rows.length) {
-        client.release();
-        throw new Error('Tenant not found');
-      }
-
-      const tenant = tenantResult.rows;
-
-      client.release();
-
-      // ====================================================================
-      // Step 3: Get pool for this tenant (RULE 2)
-      // ====================================================================
-      const tenantPool = getPoolForTenant({
-        tenant_id: tenant.tenant_id,
-        tenant_name: tenant.tenant_name,
-        db_url: tenant.db_url
-      });
-
-      client = await tenantPool.connect();
-
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
 
       // ====================================================================
-      // Step 4: Soft delete user (RULE 2 - using tenant pool)
+      // Step 1: Soft delete user (set to inactive)
       // ====================================================================
       const deleteQuery = `
         UPDATE users
@@ -792,9 +522,7 @@ class UserService {
         `${LOG.TRANSACTION_PREFIX} User soft deleted successfully`,
         {
           user_id: userId,
-          user_name: deleteResult.rows.user_name,
-          college_id: collegeId,
-          tenant_id: tenant.tenant_id
+          college_id: collegeId
         }
       );
 
@@ -809,7 +537,7 @@ class UserService {
       }
 
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} User deletion failed - transaction rolled back`,
+        `${LOG.TRANSACTION_PREFIX} User deletion failed`,
         {
           error: err.message,
           user_id: userId,

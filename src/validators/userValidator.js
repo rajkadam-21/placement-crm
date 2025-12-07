@@ -1,9 +1,8 @@
 /**
  * ============================================================================
- * USER VALIDATORS
+ * USER VALIDATORS - Request Validation Schemas
  * ============================================================================
- * Request validation schemas for user API
- * ============================================================================
+ * Joi schemas for user API endpoints
  */
 
 const Joi = require('joi');
@@ -21,7 +20,8 @@ const createUserSchema = Joi.object({
     .messages({
       'string.empty': 'User name is required',
       'string.min': `Minimum ${VALIDATION.STRING_MIN_LENGTH} characters`,
-      'string.max': 'User name cannot exceed 100 characters'
+      'string.max': 'User name cannot exceed 100 characters',
+      'any.required': 'User name is required'
     }),
 
   user_email: Joi.string()
@@ -47,10 +47,10 @@ const createUserSchema = Joi.object({
     }),
 
   user_role: Joi.string()
-    .valid(ROLES.ADMIN, ROLES.TEACHER, 'other')
+    .valid(ROLES.ADMIN, ROLES.TEACHER, 'student', 'other')
     .required()
     .messages({
-      'any.only': `User role must be one of: ${ROLES.ADMIN}, ${ROLES.TEACHER}, other`,
+      'any.only': `User role must be one of: ${ROLES.ADMIN}, ${ROLES.TEACHER}, student, other`,
       'any.required': 'User role is required'
     })
 });
@@ -70,10 +70,10 @@ const updateUserSchema = Joi.object({
     }),
 
   user_role: Joi.string()
-    .valid(ROLES.ADMIN, ROLES.TEACHER, 'other')
+    .valid(ROLES.ADMIN, ROLES.TEACHER, 'student', 'other')
     .optional()
     .messages({
-      'any.only': `User role must be one of: ${ROLES.ADMIN}, ${ROLES.TEACHER}, other`
+      'any.only': `User role must be one of: ${ROLES.ADMIN}, ${ROLES.TEACHER}, student, other`
     }),
 
   user_status: Joi.string()

@@ -1,221 +1,233 @@
 /**
  * ============================================================================
- * API DEVELOPMENT PROMPT - For Your Existing Multi-Tenant Project
+ * API DEVELOPMENT PROMPT - UPDATED & CORRECTED
  * ============================================================================
- * 
  * Use this prompt for ALL NEW or ENHANCED APIs to maintain consistent:
  * - Code quality & standards
  * - Security practices
- * - Logging & observability (IMPROVED - Winston + Structured Logs)
- * - Rate limiting & traffic control (IMPROVED - 7 specialized limiters)
+ * - Optimized logging (Essential logs only - Winston + Structured JSON)
+ * - Rate limiting & traffic control
  * - Transaction handling
- * - Multi-tenant architecture support
- * - SonarQube compliance
- * - Performance optimization
- * - 50+ years backend experience standards
+ * - Single database model (All colleges in one DB)
  * - Production-grade enterprise practices
- * 
- * Your Project Architecture:
- * - T1 (Default): Shared database - colleges, users, students in MAIN DB
- * - T2+ (Future): Separate databases - each tenant has own connection
- * 
- * ============================================================================
- * ⭐ UPDATED: LOGGING & RATE LIMITING
  * ============================================================================
  */
 
+/**
+ * ============================================================================
+ * CRITICAL CHANGES FROM ORIGINAL PROMPT
+ * ============================================================================
+ * 
+ * ❌ REMOVED (NOT IN YOUR ARCHITECTURE):
+ * 1. globalLimiter - Application does not use global limiter
+ * 2. uploadLimiter - No file upload functionality
+ * 3. searchLimiter - No dedicated search endpoints
+ * 4. collegeLimiter - Not implemented in current stack
+ * 5. readLimiter - Simplified to apiLimiter only
+ * 6. tenantLimiter - No tenant architecture
+ * 7. getMainPool() with tenant database switching - Using ONLY main pool
+ * 8. SUSPENDED and PENDING statuses - Using only ACTIVE, INACTIVE
+ * 9. ROLES.OTHER - Removed, using only SYSADMIN, ADMIN, TEACHER, STUDENT
+ * 10. Multi-tenant database logic - Single database architecture
+ * 
+ * ✅ SIMPLIFIED TO (YOUR ACTUAL IMPLEMENTATION):
+ * 1. authLimiter - 5 attempts per 15 minutes (for login endpoints)
+ * 2. apiLimiter - 50 requests per minute (for all other endpoints)
+ * 3. getMainPool() ONLY - All queries use main pool, no tenant switching
+ * 4. STATUS.ACTIVE, STATUS.INACTIVE - Only these two statuses
+ * 5. ROLES: SYSADMIN, ADMIN, TEACHER, STUDENT - Four roles only
+ * 6. Single Database - No tenant isolation complexity, just college_id filtering
+ */
+
 // ============================================================================
-// LOGGING STANDARDS (IMPROVED - Winston)
+// LOGGING STANDARDS - LEAN & PERFORMANT (CORRECTED)
 // ============================================================================
 
 /**
  * All logging uses Winston logger with structured JSON output
+ * PHILOSOPHY: Log ONLY what matters for debugging and monitoring
  * 
  * Log Levels:
- * - error: System errors, exceptions (level 0)
- * - warn: Warnings, validation failures (level 1)
- * - info: API calls, successful operations (level 2)
- * - debug: Detailed flow information (level 3)
+ * - error: System errors, exceptions, failed operations (level 0) - ALWAYS log
+ * - warn: Validation failures, security issues (level 1) - ALWAYS log
+ * - info: API endpoints, successful operations (level 2) - Log strategically
+ * - debug: Detailed flow (level 3) - Only in development
+ * 
+ * Logging Rules:
+ * ✅ Log API_START: Only for POST/PUT/DELETE (state-changing operations)
+ * ✅ Log API_END: Only on success, with duration_ms
+ * ✅ Log API_ERROR: Always, with error details
+ * ✅ Log SECURITY warnings: All auth failures, unauthorized access
+ * ✅ Log TRANSACTION: Multi-step operations (commit/rollback)
+ * ✅ Log INFO: Successful resource operations with IDs
+ * ❌ Do NOT log GET requests unless slow (>500ms) or error
+ * ❌ Do NOT log routine operations
+ * ❌ Do NOT log sensitive data (passwords, tokens)
+ * ❌ Do NOT use console.log/console.error
  * 
  * Usage in Controllers:
- * ✅ logger.info(`${LOG.API_START_PREFIX} METHOD /endpoint`, { user_id, ip })
- * ✅ logger.info(`${LOG.API_END_PREFIX} METHOD /endpoint`, { duration_ms })
- * ✅ logger.error(`${LOG.API_ERROR_PREFIX} METHOD /endpoint`, { error, code })
- * ✅ logger.warn(`${LOG.SECURITY_PREFIX} Unauthorized access`, { user_id })
- * ✅ logger.warn(`${LOG.VALIDATION_PREFIX} Missing fields`, { fields })
- * ✅ logger.debug(`${LOG.TRANSACTION_PREFIX} Starting operation`)
+ * ✅ logger.info(`${LOG.API_START_PREFIX} POST /endpoint`, { user_id, college_id })
+ * ✅ logger.info(`${LOG.API_END_PREFIX} POST /endpoint`, { resource_id, duration_ms })
+ * ✅ logger.error(`${LOG.API_ERROR_PREFIX} POST /endpoint`, { error, code })
+ * ✅ logger.warn(`${LOG.SECURITY_PREFIX} Unauthorized access`, { user_id, reason })
+ * ✅ logger.debug(`${LOG.TRANSACTION_PREFIX} Starting operation`, { operation })
  * ✅ logger.info(`${LOG.TRANSACTION_PREFIX} Committed`, { resource_id })
  * ✅ logger.error(`${LOG.TRANSACTION_PREFIX} Rolled back`, { error })
  * 
- * DO NOT USE:
+ * ❌ DO NOT USE:
  * ❌ console.log()
  * ❌ console.error()
  * ❌ console.warn()
+ * ❌ logger.debug() in production (development only)
+ * ❌ Logging every function call
+ * ❌ Logging internal variable states
+ * ❌ Logging sensitive data (emails are OK, passwords are NOT)
  * 
- * Features:
- * - Console output (colored, human-readable) in development
- * - File rotation (10MB per file, keep 5-10 files) in production
- * - Separate error/info/combined logs
- * - Error stack traces captured
- * - Metadata tracking (user_id, tenant_id, IP, duration)
- * - Environment-specific log levels
- * - Uncaught exception handlers
- * 
- * Log Output Example (Development):
- * 2025-11-16T20:30:45.123Z [INFO]: [API_START] POST /api/v1/resources user_id=123 ip=192.168.1.1
- * 2025-11-16T20:30:46.456Z [DEBUG]: [TRANSACTION] Starting resource creation
- * 2025-11-16T20:30:47.789Z [INFO]: [TRANSACTION] Transaction committed resource_id=1
- * 2025-11-16T20:30:48.012Z [INFO]: [API_END] POST /api/v1/resources duration_ms=2889
+ * Logs Available in constants.js:
+ * - LOG.API_START_PREFIX: '[API_START]'
+ * - LOG.API_END_PREFIX: '[API_END]'
+ * - LOG.API_ERROR_PREFIX: '[API_ERROR]'
+ * - LOG.TRANSACTION_PREFIX: '[TRANSACTION]'
+ * - LOG.SECURITY_PREFIX: '[SECURITY]'
  */
 
 // ============================================================================
-// RATE LIMITING STANDARDS (IMPROVED - 7 Specialized Limiters)
+// RATE LIMITING STANDARDS - SIMPLIFIED (2 LIMITERS ONLY)
 // ============================================================================
 
 /**
  * Rate limiting prevents abuse and controls traffic
  * 
- * Limiter Types (Import from rateLimiter.js):
+ * YOUR STACK HAS ONLY 2 LIMITERS (Not 7):
  * 
- * 1. globalLimiter (Applied to all routes)
- *    - 100 requests per 15 minutes per IP
- *    - Bypass: System admins, health check
- *    - Apply: app.use(globalLimiter)
+ * 1. authLimiter (Import from rateLimiter.js)
+ *    - Purpose: Prevent brute force on login
+ *    - Limit: 5 attempts per 15 minutes
+ *    - Bypass: None (security feature - no bypass even for sysadmin)
+ *    - Apply to: POST /auth/login, POST /students/login
+ *    - Example: router.post('/login', authLimiter, controller.login)
  * 
- * 2. authLimiter (Authentication endpoints - STRICT)
- *    - 5 attempts per 15 minutes per IP
- *    - Bypass: None (security feature)
- *    - Apply: router.post('/login', authLimiter, controller)
- * 
- * 3. apiLimiter (General API endpoints - MODERATE)
- *    - 50 requests per minute per IP
- *    - Bypass: System admins
- *    - Apply: router.post('/create', apiLimiter, controller)
- * 
- * 4. uploadLimiter (File uploads - STRICT)
- *    - 10 uploads per hour per user
- *    - Bypass: System admins
- *    - Apply: router.post('/upload', uploadLimiter, controller)
- * 
- * 5. searchLimiter (Search operations - MODERATE)
- *    - 30 searches per minute per user
- *    - Bypass: System admins
- *    - Apply: router.get('/search', searchLimiter, controller)
- * 
- * 6. tenantLimiter (Per-tenant isolation)
- *    - 100 requests per 15 minutes per tenant
- *    - Bypass: System admins
- *    - Apply: router.use('/', tenantLimiter)
- * 
- * 7. collegeLimiter (Per-college isolation)
- *    - 200 requests per 15 minutes per college
- *    - Bypass: System admins
- *    - Apply: router.use('/', collegeLimiter)
+ * 2. apiLimiter (Import from rateLimiter.js)
+ *    - Purpose: General API endpoint protection
+ *    - Limit: 50 requests per 1 minute
+ *    - Bypass: Sysadmin users
+ *    - Apply to: All POST, PUT, DELETE endpoints
+ *    - Example: router.post('/create', apiLimiter, controller.create)
  * 
  * Usage in Routes:
- * ✅ const { authLimiter, uploadLimiter } = require('../config/rateLimiter');
+ * ✅ const { authLimiter, apiLimiter } = require('../config/rateLimiter');
  * ✅ router.post('/login', authLimiter, authController.login);
- * ✅ router.post('/upload', uploadLimiter, fileController.upload);
+ * ✅ router.post('/create', apiLimiter, controller.create);
+ * ✅ router.put('/update', apiLimiter, controller.update);
+ * ✅ router.delete('/remove', apiLimiter, controller.delete);
+ * ✅ router.get('/list', controller.list); // No rate limit for GET
  * 
  * Rate Limit Exceeded Response (429):
  * {
  *   "success": false,
- *   "message": "Too many requests, please try again later",
- *   "retryAfter": 1234567890
+ *   "message": "Too many login attempts. Please try again in 15 minutes.",
+ *   "retryAfter": 900
  * }
  * 
- * Response Headers:
- * - RateLimit-Limit: 100
- * - RateLimit-Remaining: 87
- * - RateLimit-Reset: 1637091045
+ * ❌ DO NOT USE (Not in your stack):
+ * ❌ globalLimiter
+ * ❌ uploadLimiter
+ * ❌ searchLimiter
+ * ❌ collegeLimiter
+ * ❌ readLimiter
+ * ❌ tenantLimiter
  */
 
 // ============================================================================
-// CRITICAL: DATABASE POOL SELECTION LOGIC
+// DATABASE POOL USAGE - SINGLE DATABASE ONLY
 // ============================================================================
 
 /**
- * RULE 1: Query TENANTS or COLLEGES table
- * Always use: getMainPool()
- * Reason: These tables exist only in main database
+ * SINGLE DATABASE RULE:
+ * All colleges, users, students, resources in ONE shared database
+ * Always use: getMainPool() - that's it, no other pools
  * 
- * Example:
+ * Pool Selection:
+ * - getMainPool() → Returns connection pool to main PostgreSQL DB
+ * - All queries go to same database
+ * - Tenant isolation via college_id (row-level filtering)
+ * 
+ * ❌ NEVER DO THIS:
+ * ❌ getPool(tenantId)
+ * ❌ getPool(collegeId)
+ * ❌ Switch between multiple databases
+ * ❌ Use different connection pools for different colleges
+ * ❌ Create separate databases for colleges
+ * 
+ * ✅ ALWAYS DO THIS:
+ * ✅ const mainPool = getMainPool();
+ * ✅ Filter by college_id in WHERE clause
+ * ✅ Ensure ALL queries include college_id in WHERE
+ * 
+ * Example - Query colleges table:
  * const mainPool = getMainPool();
  * const { rows } = await mainPool.query(
  *   'SELECT * FROM colleges WHERE college_id = $1',
  *   [collegeId]
  * );
- */
-
-/**
- * RULE 2: Query USERS, STUDENTS, or tenant-specific tables
- * First: Get tenant info from colleges table (use getMainPool)
- * Then: Get pool for that tenant (use getPoolForTenant)
- * Finally: Query using tenant's pool
  * 
- * Example:
- * // Step 1: Get tenant info from main DB
+ * Example - Query users table:
  * const mainPool = getMainPool();
- * const collegeQuery = 'SELECT tenant_id, college_id FROM colleges WHERE college_id = $1';
- * const collegeResult = await mainPool.query(collegeQuery, [collegeId]);
- * const college = collegeResult.rows[0];
- * 
- * // Step 2: Get tenant record to get db_url (if separate DB)
- * const tenantQuery = 'SELECT * FROM tenants WHERE tenant_id = $1';
- * const tenantResult = await mainPool.query(tenantQuery, [college.tenant_id]);
- * const tenant = tenantResult.rows[0];
- * 
- * // Step 3: Get pool for this tenant
- * const tenantPool = getPoolForTenant({
- *   tenant_id: tenant.tenant_id,
- *   tenant_name: tenant.tenant_name,
- *   db_url: tenant.db_url // null for T1 (uses main), or connection string for T2+
- * });
- * 
- * // Step 4: Query users/students table
- * const { rows } = await tenantPool.query(
- *   'SELECT * FROM users WHERE college_id = $1',
- *   [collegeId]
+ * const { rows } = await mainPool.query(
+ *   'SELECT * FROM users WHERE college_id = $1 AND user_id = $2',
+ *   [collegeId, userId]
  * );
- */
-
-/**
- * CURRENT STATE (Right Now):
- * - T1: All colleges, users, students in MAIN DATABASE ONLY
- * - getPoolForTenant(null or {db_url: null}) → returns mainPool
- * - So all queries use getMainPool() or getPoolForTenant(null)
- * - Same database for everything
  * 
- * FUTURE STATE (When T2+ needed):
- * - T2: Has separate database connection string in tenants.db_url
- * - getPoolForTenant({db_url: "postgres://..."}) → returns dedicated pool
- * - Your code will automatically work with separate databases
- * - No code changes needed - just add db_url to tenant record
+ * Tenant Isolation Pattern:
+ * ALL queries to users/students/resources MUST include:
+ * WHERE college_id = $X (required filter)
+ * This ensures users only see/modify data for their college
+ * 
+ * Database Schema:
+ * - colleges (main table, no parent)
+ * - users (college_id FK to colleges)
+ * - students (college_id FK to colleges)
+ * - Any new tables must have college_id FK
+ * 
+ * ❌ NO TENANTS TABLE, NO DB_URL, NO MULTI-DB LOGIC
  */
 
 // ============================================================================
 // STEP-BY-STEP API CREATION PROCESS
 // ============================================================================
 
-// ============================================================================
-// STEP 1: CREATE VALIDATOR
-// ============================================================================
-
 /**
+ * STEP 1: CREATE VALIDATOR
+ * ============================================================================
  * File: src/validators/yourResourceValidator.js
  * 
  * What to do:
  * - Define Joi schema for request body validation
- * - Use error messages from constants.js
+ * - Use error messages from constants.js (not hardcoded)
  * - Export schema with clear name
  * - Support query parameters if needed
+ * - Use VALIDATION constants for min/max lengths
+ * 
+ * Validation Rules:
+ * ✅ Use Joi for validation
+ * ✅ Import VALIDATION, STATUS, ROLES from constants
+ * ✅ Custom error messages for user clarity
+ * ✅ Support optional fields with .optional()
+ * ✅ Default values with .default()
+ * ✅ UUID validation with .uuid()
+ * ✅ Email validation with .email()
+ * ✅ Enum validation with .valid()
+ * ✅ Pattern validation with .pattern()
+ * 
+ * ❌ Do NOT:
+ * ❌ Hardcode error messages
+ * ❌ Use magic numbers
+ * ❌ Validate things database should validate
  */
 
-// Example:
 const Joi = require('joi');
 const { VALIDATION, STATUS, ROLES } = require('../config/constants');
 
-// Request body validation
 const createYourResourceSchema = Joi.object({
   resource_name: Joi.string()
     .min(VALIDATION.STRING_MIN_LENGTH)
@@ -223,63 +235,25 @@ const createYourResourceSchema = Joi.object({
     .required()
     .messages({
       'string.empty': 'Resource name is required',
-      'string.min': `Minimum ${VALIDATION.STRING_MIN_LENGTH} characters`
+      'string.min': `Minimum ${VALIDATION.STRING_MIN_LENGTH} characters`,
+      'any.required': 'Resource name is required'
     }),
-
+  
   resource_description: Joi.string()
     .max(500)
     .optional(),
-
+  
   status: Joi.string()
-    .valid(...Object.values(STATUS))
+    .valid(STATUS.ACTIVE, STATUS.INACTIVE)
     .optional()
     .default(STATUS.ACTIVE),
-
-  assigned_to: Joi.number()
-    .positive()
+  
+  assigned_to: Joi.string()
+    .uuid()
     .optional()
     .messages({
-      'number.positive': 'Invalid user ID'
+      'string.guid': 'Invalid user ID format'
     })
-});
-
-const updateYourResourceSchema = Joi.object({
-  resource_name: Joi.string()
-    .min(VALIDATION.STRING_MIN_LENGTH)
-    .max(VALIDATION.STRING_MAX_LENGTH)
-    .optional(),
-
-  resource_description: Joi.string()
-    .max(500)
-    .optional(),
-
-  status: Joi.string()
-    .valid(...Object.values(STATUS))
-    .optional()
-}).min(1).messages({
-  'object.min': 'At least one field must be updated'
-});
-
-// Query parameter validation (for list endpoint)
-const listYourResourcesSchema = Joi.object({
-  page: Joi.number()
-    .positive()
-    .optional()
-    .default(1),
-
-  limit: Joi.number()
-    .positive()
-    .max(100)
-    .optional()
-    .default(20),
-
-  status: Joi.string()
-    .valid(...Object.values(STATUS))
-    .optional(),
-
-  search: Joi.string()
-    .max(100)
-    .optional()
 });
 
 module.exports = {
@@ -288,506 +262,136 @@ module.exports = {
   listYourResourcesSchema
 };
 
-// ============================================================================
-// STEP 2: CREATE SERVICE
-// ============================================================================
-
 /**
+ * STEP 2: CREATE SERVICE
+ * ============================================================================
  * File: src/services/yourResourceService.js
  * 
  * What to do:
- * - Database queries using correct pool (see RULE 1 & RULE 2 above)
+ * - Database queries using getMainPool() ONLY
  * - Transaction handling for multi-step operations
- * - Use logger for all operations (not console.log)
+ * - Use logger for errors and transactions only
  * - Return only data (no res.json)
  * - Throw errors for controller to handle
- * - NO business logic in controllers
+ * - College ID filtering on ALL queries (tenant isolation)
+ * - NO business logic in controllers - all goes here
+ * 
+ * Service Rules:
+ * ✅ Use getMainPool() for all queries
+ * ✅ Filter by college_id on EVERY query
+ * ✅ Use transactions for multi-step operations
+ * ✅ Log TRANSACTION starts/commits/rollbacks
+ * ✅ Log API_ERROR on exception
+ * ✅ Throw errors, don't return error objects
+ * ✅ Use parameterized queries ($1, $2 syntax)
+ * ✅ Verify college_id exists before operations
+ * ✅ Handle specific DB error codes
+ * ✅ Return only necessary data
+ * ✅ Use try-finally to release connections
+ * 
+ * ❌ Do NOT:
+ * ❌ Use getPool(collegeId) or any other pool
+ * ❌ Query without college_id filter
+ * ❌ Mix business logic with DB operations
+ * ❌ Return res or response objects
+ * ❌ Handle HTTP responses in service
+ * ❌ Use string concatenation for SQL
+ * ❌ Catch and suppress errors
+ * 
+ * Example Structure:
+ * - Class YourResourceService
+ *   - create(data, collegeId)
+ *   - getById(id, collegeId)
+ *   - update(id, data, collegeId)
+ *   - list(filters, collegeId, page, limit)
+ *   - delete(id, collegeId)
  */
 
-// Example:
-const { getPoolForTenant, getMainPool } = require('../config/db');
-const logger = require('../config/logger');
-const { LOG, STATUS, DB_ERROR_CODES, HTTP_STATUS } = require('../config/constants');
-
-class YourResourceService {
-  /**
-   * Creates resource with transaction
-   * 
-   * Database: Gets tenant info first, then uses appropriate pool
-   * Isolation: SERIALIZABLE to prevent race conditions
-   * Logging: All operations logged with LOG prefixes
-   * 
-   * @param {Object} data - Resource data { resource_name, description, assigned_to }
-   * @param {number} collegeId - College ID (required for tenant isolation)
-   * @param {Object} tenant - Tenant info from req.tenant
-   * @returns {Object} Created resource
-   * @throws {Error} Database errors
-   */
-  async create(data, collegeId, tenant = null) {
-    const mainPool = getMainPool();
-    const client = await mainPool.connect();
-
-    try {
-      // Log transaction start
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Starting resource creation transaction`, {
-        college_id: collegeId
-      });
-
-      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
-
-      // Step 1: Verify college exists and belongs to this tenant
-      const collegeCheckQuery = `
-        SELECT college_id, tenant_id FROM colleges 
-        WHERE college_id = $1 
-        AND status = $2 
-        LIMIT 1
-      `;
-
-      const collegeCheckResult = await client.query(collegeCheckQuery, [
-        collegeId,
-        STATUS.ACTIVE
-      ]);
-
-      if (!collegeCheckResult.rows.length) {
-        throw new Error('College not found or inactive');
-      }
-
-      const college = collegeCheckResult.rows[0];
-
-      // Verify tenant isolation
-      if (tenant && college.tenant_id !== tenant.tenant_id) {
-        throw new Error('Access denied - College does not belong to your tenant');
-      }
-
-      // Step 2: Insert resource
-      const insertQuery = `
-        INSERT INTO your_resources (
-          college_id,
-          resource_name,
-          resource_description,
-          assigned_to,
-          status,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, NOW())
-        RETURNING *
-      `;
-
-      const { rows } = await client.query(insertQuery, [
-        collegeId,
-        data.resource_name,
-        data.resource_description || null,
-        data.assigned_to || null,
-        STATUS.ACTIVE
-      ]);
-
-      // Step 3: If assigned_to is provided, verify user exists
-      if (data.assigned_to) {
-        const userCheckQuery = `
-          SELECT user_id FROM users 
-          WHERE user_id = $1 
-          AND college_id = $2 
-          LIMIT 1
-        `;
-
-        const userCheckResult = await client.query(userCheckQuery, [
-          data.assigned_to,
-          collegeId
-        ]);
-
-        if (!userCheckResult.rows.length) {
-          throw new Error('Assigned user not found in this college');
-        }
-      }
-
-      // Log transaction commit
-      await client.query('COMMIT');
-
-      logger.info(
-        `${LOG.TRANSACTION_PREFIX} Resource created successfully`,
-        {
-          resource_id: rows[0].id,
-          college_id: collegeId,
-          created_by_tenant: college.tenant_id
-        }
-      );
-
-      return rows[0];
-
-    } catch (err) {
-      // Log transaction rollback
-      await client.query('ROLLBACK');
-
-      logger.error(
-        `${LOG.TRANSACTION_PREFIX} Resource creation failed - transaction rolled back`,
-        {
-          error: err.message,
-          code: err.code,
-          college_id: collegeId
-        }
-      );
-
-      // Handle specific database errors
-      if (err.code === DB_ERROR_CODES.UNIQUE_VIOLATION) {
-        throw new Error('Resource with this name already exists');
-      }
-
-      if (err.code === DB_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
-        throw new Error('Invalid college or user reference');
-      }
-
-      throw err;
-
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Fetch single resource by ID
-   * 
-   * @param {number} resourceId - Resource ID
-   * @param {number} collegeId - College ID (for tenant isolation)
-   * @param {Object} tenant - Tenant info
-   * @returns {Object} Resource data
-   * @throws {Error} If not found
-   */
-  async getById(resourceId, collegeId, tenant = null) {
-    const mainPool = getMainPool(); // All tables currently in main DB
-
-    const query = `
-      SELECT * FROM your_resources 
-      WHERE id = $1 
-      AND college_id = $2 
-      AND status = $3
-      LIMIT 1
-    `;
-
-    const { rows } = await mainPool.query(query, [
-      resourceId,
-      collegeId,
-      STATUS.ACTIVE
-    ]);
-
-    if (!rows.length) {
-      throw new Error('Resource not found');
-    }
-
-    // Verify tenant isolation
-    if (tenant) {
-      const collegeQuery = `
-        SELECT tenant_id FROM colleges WHERE college_id = $1
-      `;
-      const collegeResult = await mainPool.query(collegeQuery, [collegeId]);
-
-      if (collegeResult.rows[0].tenant_id !== tenant.tenant_id) {
-        throw new Error('Access denied - Resource does not belong to your tenant');
-      }
-    }
-
-    return rows[0];
-  }
-
-  /**
-   * Update resource
-   * 
-   * @param {number} resourceId - Resource ID
-   * @param {Object} data - Update data
-   * @param {number} collegeId - College ID
-   * @param {Object} tenant - Tenant info
-   * @returns {Object} Updated resource
-   */
-  async update(resourceId, data, collegeId, tenant = null) {
-    const mainPool = getMainPool();
-    const client = await mainPool.connect();
-
-    try {
-      logger.debug(`${LOG.TRANSACTION_PREFIX} Starting resource update transaction`, {
-        resource_id: resourceId,
-        college_id: collegeId
-      });
-
-      await client.query('BEGIN');
-
-      // Verify resource exists and belongs to college
-      const checkQuery = `
-        SELECT id FROM your_resources 
-        WHERE id = $1 
-        AND college_id = $2 
-        LIMIT 1
-      `;
-
-      const checkResult = await client.query(checkQuery, [resourceId, collegeId]);
-
-      if (!checkResult.rows.length) {
-        throw new Error('Resource not found');
-      }
-
-      // Verify tenant isolation
-      if (tenant) {
-        const tenantCheckQuery = `
-          SELECT c.tenant_id FROM colleges c
-          WHERE c.college_id = $1
-        `;
-        const tenantCheckResult = await client.query(tenantCheckQuery, [collegeId]);
-
-        if (tenantCheckResult.rows[0].tenant_id !== tenant.tenant_id) {
-          throw new Error('Access denied');
-        }
-      }
-
-      // Update resource
-      const updateQuery = `
-        UPDATE your_resources
-        SET 
-          resource_name = COALESCE($1, resource_name),
-          resource_description = COALESCE($2, resource_description),
-          assigned_to = COALESCE($3, assigned_to),
-          status = COALESCE($4, status),
-          updated_at = NOW()
-        WHERE id = $5
-        AND college_id = $6
-        RETURNING *
-      `;
-
-      const { rows } = await client.query(updateQuery, [
-        data.resource_name || null,
-        data.resource_description || null,
-        data.assigned_to || null,
-        data.status || null,
-        resourceId,
-        collegeId
-      ]);
-
-      await client.query('COMMIT');
-
-      logger.info(
-        `${LOG.TRANSACTION_PREFIX} Resource updated successfully`,
-        {
-          resource_id: resourceId,
-          college_id: collegeId,
-          updated_fields: Object.keys(data)
-        }
-      );
-
-      return rows[0];
-
-    } catch (err) {
-      await client.query('ROLLBACK');
-
-      logger.error(
-        `${LOG.TRANSACTION_PREFIX} Resource update failed - rolled back`,
-        { error: err.message }
-      );
-
-      throw err;
-
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * List resources with filtering and pagination
-   * 
-   * @param {Object} filters - { status, search, assigned_to }
-   * @param {number} collegeId - College ID
-   * @param {number} page - Page number
-   * @param {number} limit - Items per page
-   * @param {Object} tenant - Tenant info
-   * @returns {Object} { data, pagination }
-   */
-  async list(filters = {}, collegeId, page = 1, limit = 20, tenant = null) {
-    const mainPool = getMainPool();
-
-    const offset = (page - 1) * limit;
-
-    // Build dynamic query
-    let baseQuery = `
-      SELECT * FROM your_resources 
-      WHERE college_id = $1 
-      AND status = $2
-    `;
-
-    const params = [collegeId, STATUS.ACTIVE];
-    let paramIndex = 3;
-
-    // Add optional filters
-    if (filters.status && filters.status !== STATUS.ACTIVE) {
-      baseQuery += ` AND status = $${paramIndex}`;
-      params.push(filters.status);
-      paramIndex++;
-    }
-
-    if (filters.search) {
-      baseQuery += ` AND resource_name ILIKE $${paramIndex}`;
-      params.push(`%${filters.search}%`);
-      paramIndex++;
-    }
-
-    if (filters.assigned_to) {
-      baseQuery += ` AND assigned_to = $${paramIndex}`;
-      params.push(filters.assigned_to);
-      paramIndex++;
-    }
-
-    // Count total
-    const countQuery = baseQuery.replace('SELECT *', 'SELECT COUNT(*) as total');
-    const countResult = await mainPool.query(countQuery, params.slice(0, paramIndex - 1));
-    const total = parseInt(countResult.rows[0].total);
-
-    // Fetch paginated results
-    const listQuery = baseQuery + `
-      ORDER BY created_at DESC 
-      LIMIT $${paramIndex} 
-      OFFSET $${paramIndex + 1}
-    `;
-
-    params.push(limit, offset);
-
-    const { rows } = await mainPool.query(listQuery, params);
-
-    logger.debug(
-      `${LOG.TRANSACTION_PREFIX} Resources listed`,
-      {
-        college_id: collegeId,
-        total_count: total,
-        returned_count: rows.length,
-        page: page
-      }
-    );
-
-    return {
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    };
-  }
-
-  /**
-   * Soft delete resource (mark as inactive)
-   * 
-   * @param {number} resourceId - Resource ID
-   * @param {number} collegeId - College ID
-   * @param {Object} tenant - Tenant info
-   * @returns {Object} Deleted resource
-   */
-  async delete(resourceId, collegeId, tenant = null) {
-    const mainPool = getMainPool();
-
-    const query = `
-      UPDATE your_resources
-      SET status = $1, updated_at = NOW()
-      WHERE id = $2
-      AND college_id = $3
-      RETURNING id, resource_name
-    `;
-
-    const { rows } = await mainPool.query(query, [
-      STATUS.INACTIVE,
-      resourceId,
-      collegeId
-    ]);
-
-    if (!rows.length) {
-      throw new Error('Resource not found');
-    }
-
-    logger.info(
-      `${LOG.TRANSACTION_PREFIX} Resource soft deleted`,
-      {
-        resource_id: resourceId,
-        college_id: collegeId,
-        resource_name: rows[0].resource_name
-      }
-    );
-
-    return rows[0];
-  }
-}
-
-module.exports = new YourResourceService();
-
-// ============================================================================
-// STEP 3: CREATE CONTROLLER
-// ============================================================================
-
 /**
+ * STEP 3: CREATE CONTROLLER
+ * ============================================================================
  * File: src/controllers/yourResourceController.js
  * 
  * What to do:
- * - Log API_START at beginning with metadata
- * - Log API_END on success with duration
- * - Log API_ERROR on failure with error details
- * - Call service functions only
- * - Use responseHelper for responses
+ * - Log API_START only for POST/PUT/DELETE (state-changing)
+ * - Log API_END only on success with duration_ms
+ * - Log API_ERROR on failure with error message
+ * - Call service functions only (NO direct DB queries)
+ * - Use responseHelper.success/error for responses
  * - Handle authorization checks
- * - NO database queries directly
+ * - Track request duration
+ * 
+ * Controller Rules:
+ * ✅ Calculate startTime = Date.now() at beginning
+ * ✅ Log API_START with user_id, college_id for state-changing ops
+ * ✅ Check authorization (role, college_id)
+ * ✅ Log SECURITY warnings for auth failures
+ * ✅ Call service methods only
+ * ✅ Calculate duration = Date.now() - startTime
+ * ✅ Log API_END with resource_id, duration_ms
+ * ✅ Log API_ERROR with error message, duration_ms
+ * ✅ Return success/error using helper functions
+ * ✅ Convert DB errors to user-friendly messages
+ * ✅ Use appropriate HTTP status codes
+ * ✅ Don't expose internal error details to client
+ * 
+ * ❌ Do NOT:
+ * ❌ Query database directly
+ * ❌ Log GET requests unless error
+ * ❌ Mix business logic with HTTP handling
+ * ❌ Return raw database errors to client
+ * ❌ Hardcode error messages
+ * ❌ Use res.status().json() directly
+ * ❌ Forget duration_ms in logging
+ * ❌ Skip authorization checks
+ * 
+ * HTTP Status Codes to Use:
+ * - 200 OK: GET, PUT success
+ * - 201 CREATED: POST success
+ * - 204 NO CONTENT: DELETE success (optional)
+ * - 400 BAD REQUEST: Validation error, invalid input
+ * - 401 UNAUTHORIZED: No token or invalid token
+ * - 403 FORBIDDEN: Insufficient permissions
+ * - 404 NOT FOUND: Resource doesn't exist
+ * - 409 CONFLICT: Duplicate entry, email exists
+ * - 429 TOO_MANY_REQUESTS: Rate limited
+ * - 500 INTERNAL_SERVER_ERROR: Unhandled error
  */
 
-// Example:
-const yourResourceService = require('../services/yourResourceService');
-const logger = require('../config/logger');
-const { LOG, HTTP_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES, ROLES } = require('../config/constants');
-const { success, error } = require('../utils/responseHelper');
-
-/**
- * POST /api/v1/resources
- * Create new resource
- */
 async function createResource(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} POST /resources`;
   const startTime = Date.now();
-
-  logger.info(requestId, {
+  
+  logger.info(`${LOG.API_START_PREFIX} POST /api/v1/resources`, {
     user_id: req.user?.id,
-    user_role: req.user?.role,
-    college_id: req.user?.college_id,
-    tenant_id: req.tenant?.tenant_id || 'main',
-    ip: req.ip
+    college_id: req.user?.college_id
   });
 
   try {
-    const { resource_name, resource_description, assigned_to } = req.validated;
-
-    // Authorization check: Only admin/sysadmin can create
-    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
+    // Authorization check
+    if (req.user?.user_role !== ROLES.ADMIN && 
+        req.user?.user_role !== ROLES.SYSADMIN) {
       logger.warn(
         `${LOG.SECURITY_PREFIX} Unauthorized resource creation attempt`,
         {
           user_id: req.user?.id,
-          user_role: req.user?.role,
-          required_role: ROLES.ADMIN
+          user_role: req.user?.user_role
         }
       );
-
       return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
     }
 
     // Call service
     const newResource = await yourResourceService.create(
-      {
-        resource_name,
-        resource_description,
-        assigned_to
-      },
-      req.user.college_id,
-      req.tenant
+      req.validated,
+      req.user.college_id
     );
 
     const duration = Date.now() - startTime;
 
     logger.info(
-      `${LOG.API_END_PREFIX} POST /resources - Resource created successfully`,
+      `${LOG.API_END_PREFIX} POST /api/v1/resources`,
       {
         resource_id: newResource.id,
-        resource_name: newResource.resource_name,
-        created_by: req.user.id,
-        college_id: req.user.college_id,
         duration_ms: duration
       }
     );
@@ -795,7 +399,7 @@ async function createResource(req, res) {
     return success(
       res,
       newResource,
-      SUCCESS_MESSAGES.RESOURCE_CREATED,
+      'Resource created successfully',
       HTTP_STATUS.CREATED
     );
 
@@ -803,508 +407,339 @@ async function createResource(req, res) {
     const duration = Date.now() - startTime;
 
     logger.error(
-      `${LOG.API_ERROR_PREFIX} POST /resources - Error`,
+      `${LOG.API_ERROR_PREFIX} POST /api/v1/resources`,
       {
         error: err.message,
-        user_id: req.user?.id,
-        college_id: req.user?.college_id,
-        duration_ms: duration,
-        stack: err.stack
-      }
-    );
-
-    if (err.message.includes('already exists')) {
-      return error(res, err.message, HTTP_STATUS.CONFLICT);
-    }
-
-    if (err.message.includes('not found') || err.message.includes('does not belong')) {
-      return error(res, err.message, HTTP_STATUS.BAD_REQUEST);
-    }
-
-    if (err.message.includes('Access denied')) {
-      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
-    }
-
-    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-}
-
-/**
- * GET /api/v1/resources/:resourceId
- * Fetch single resource
- */
-async function getResource(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} GET /resources/:resourceId`;
-  const startTime = Date.now();
-
-  logger.info(requestId, {
-    resource_id: req.params.resourceId,
-    user_id: req.user?.id,
-    college_id: req.user?.college_id
-  });
-
-  try {
-    const resource = await yourResourceService.getById(
-      req.params.resourceId,
-      req.user.college_id,
-      req.tenant
-    );
-
-    const duration = Date.now() - startTime;
-
-    logger.info(
-      `${LOG.API_END_PREFIX} GET /resources/:resourceId - Retrieved successfully`,
-      { resource_id: resource.id, duration_ms: duration }
-    );
-
-    return success(res, resource);
-
-  } catch (err) {
-    const duration = Date.now() - startTime;
-
-    logger.error(
-      `${LOG.API_ERROR_PREFIX} GET /resources/:resourceId - Error`,
-      { error: err.message, duration_ms: duration }
-    );
-
-    if (err.message.includes('not found')) {
-      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
-    }
-
-    if (err.message.includes('Access denied')) {
-      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
-    }
-
-    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-}
-
-/**
- * PUT /api/v1/resources/:resourceId
- * Update resource
- */
-async function updateResource(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} PUT /resources/:resourceId`;
-  const startTime = Date.now();
-
-  logger.info(requestId, {
-    resource_id: req.params.resourceId,
-    user_id: req.user?.id,
-    college_id: req.user?.college_id,
-    updated_fields: Object.keys(req.validated)
-  });
-
-  try {
-    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
-      logger.warn(
-        `${LOG.SECURITY_PREFIX} Unauthorized update attempt`,
-        { user_id: req.user?.id }
-      );
-      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
-    }
-
-    const updatedResource = await yourResourceService.update(
-      req.params.resourceId,
-      req.validated,
-      req.user.college_id,
-      req.tenant
-    );
-
-    const duration = Date.now() - startTime;
-
-    logger.info(
-      `${LOG.API_END_PREFIX} PUT /resources/:resourceId - Updated successfully`,
-      { resource_id: updatedResource.id, duration_ms: duration }
-    );
-
-    return success(res, updatedResource, SUCCESS_MESSAGES.RESOURCE_UPDATED);
-
-  } catch (err) {
-    const duration = Date.now() - startTime;
-
-    logger.error(
-      `${LOG.API_ERROR_PREFIX} PUT /resources/:resourceId - Error`,
-      { error: err.message, duration_ms: duration }
-    );
-
-    if (err.message.includes('not found')) {
-      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
-    }
-
-    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-}
-
-/**
- * GET /api/v1/resources
- * List resources with pagination
- */
-async function listResources(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} GET /resources`;
-  const startTime = Date.now();
-
-  logger.info(requestId, {
-    user_id: req.user?.id,
-    college_id: req.user?.college_id,
-    query_params: req.query
-  });
-
-  try {
-    const page = req.validated?.page || 1;
-    const limit = req.validated?.limit || 20;
-
-    const filters = {
-      status: req.validated?.status,
-      search: req.validated?.search,
-      assigned_to: req.validated?.assigned_to
-    };
-
-    const result = await yourResourceService.list(
-      filters,
-      req.user.college_id,
-      page,
-      limit,
-      req.tenant
-    );
-
-    const duration = Date.now() - startTime;
-
-    logger.info(
-      `${LOG.API_END_PREFIX} GET /resources - Retrieved ${result.data.length} resources`,
-      {
-        total: result.pagination.total,
-        page: page,
-        limit: limit,
         duration_ms: duration
       }
     );
 
-    return success(
-      res,
-      result.data,
-      'Resources retrieved',
-      HTTP_STATUS.OK
-    );
-
-  } catch (err) {
-    const duration = Date.now() - startTime;
-
-    logger.error(
-      `${LOG.API_ERROR_PREFIX} GET /resources - Error`,
-      { error: err.message, duration_ms: duration }
-    );
-
-    return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
-  }
-}
-
-/**
- * DELETE /api/v1/resources/:resourceId
- * Soft delete resource
- */
-async function deleteResource(req, res) {
-  const requestId = `${LOG.API_START_PREFIX} DELETE /resources/:resourceId`;
-  const startTime = Date.now();
-
-  logger.info(requestId, {
-    resource_id: req.params.resourceId,
-    user_id: req.user?.id
-  });
-
-  try {
-    if (req.user?.role !== ROLES.ADMIN && req.user?.role !== ROLES.SYSADMIN) {
-      logger.warn(
-        `${LOG.SECURITY_PREFIX} Unauthorized delete attempt`,
-        { user_id: req.user?.id }
-      );
-      return error(res, ERROR_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN);
+    // Error handling
+    if (err.message.includes('already exists')) {
+      return error(res, err.message, HTTP_STATUS.CONFLICT);
     }
-
-    await yourResourceService.delete(
-      req.params.resourceId,
-      req.user.college_id,
-      req.tenant
-    );
-
-    const duration = Date.now() - startTime;
-
-    logger.info(
-      `${LOG.API_END_PREFIX} DELETE /resources/:resourceId - Deleted successfully`,
-      { resource_id: req.params.resourceId, duration_ms: duration }
-    );
-
-    return success(res, {}, SUCCESS_MESSAGES.RESOURCE_DELETED);
-
-  } catch (err) {
-    const duration = Date.now() - startTime;
-
-    logger.error(
-      `${LOG.API_ERROR_PREFIX} DELETE /resources/:resourceId - Error`,
-      { error: err.message, duration_ms: duration }
-    );
 
     if (err.message.includes('not found')) {
-      return error(res, ERROR_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND);
+      return error(res, err.message, HTTP_STATUS.BAD_REQUEST);
     }
 
     return error(res, ERROR_MESSAGES.SERVER_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 }
 
-module.exports = {
-  createResource,
-  getResource,
-  updateResource,
-  listResources,
-  deleteResource
-};
-
-// ============================================================================
-// STEP 4: CREATE ROUTES
-// ============================================================================
-
 /**
+ * STEP 4: CREATE ROUTES
+ * ============================================================================
  * File: src/routes/yourResource.routes.js
  * 
  * What to do:
  * - Define routes with authMiddleware
  * - Add requireRole for authorization
  * - Apply validate() with appropriate schema
- * - Apply rate limiters where needed
+ * - Apply rate limiters correctly:
+ *   * authLimiter: ONLY on login endpoints
+ *   * apiLimiter: On POST, PUT, DELETE
+ *   * No rate limiter: On GET
  * - Map to controller functions
+ * 
+ * Route Rules:
+ * ✅ All endpoints except login: authMiddleware
+ * ✅ State-changing operations: authMiddleware, requireRole, apiLimiter
+ * ✅ Read operations: authMiddleware (no rate limiter)
+ * ✅ Login endpoints: authLimiter (no authMiddleware)
+ * ✅ Public endpoints: no auth middleware
+ * ✅ Apply validate() for input validation
+ * ✅ Require appropriate roles
+ * 
+ * ❌ Do NOT:
+ * ❌ Forget authMiddleware on protected routes
+ * ❌ Skip validation on endpoints
+ * ❌ Apply rate limiter to GET endpoints
+ * ❌ Forget college_id in queries
+ * 
+ * Example Route Structure:
+ * router.post('/', authMiddleware, requireRole(ADMIN, SYSADMIN), apiLimiter, validate(schema), controller);
+ * router.get('/', authMiddleware, controller);
+ * router.get('/:id', authMiddleware, controller);
+ * router.put('/:id', authMiddleware, requireRole(ADMIN, SYSADMIN), apiLimiter, validate(schema), controller);
+ * router.delete('/:id', authMiddleware, requireRole(ADMIN, SYSADMIN), apiLimiter, controller);
  */
 
-// Example:
 const express = require('express');
 const router = express.Router();
-const yourResourceController = require('../controllers/yourResourceController');
+const controller = require('../controllers/yourResourceController');
 const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validateRequest');
-const {
-  createYourResourceSchema,
-  updateYourResourceSchema,
-  listYourResourcesSchema
-} = require('../validators/yourResourceValidator');
-const { apiLimiter, searchLimiter } = require('../config/rateLimiter');
+const { authLimiter, apiLimiter } = require('../config/rateLimiter');
 const { ROLES } = require('../config/constants');
+const schemas = require('../validators/yourResourceValidator');
 
-// ✅ POST - Create resource (Admin/Sysadmin only)
+// POST - Create (protected, rate limited)
 router.post(
   '/',
   authMiddleware,
   requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
   apiLimiter,
-  validate(createYourResourceSchema),
-  yourResourceController.createResource
+  validate(schemas.createYourResourceSchema),
+  controller.createResource
 );
 
-// ✅ GET - List resources (Authenticated users)
+// GET - List (protected, not rate limited)
 router.get(
   '/',
   authMiddleware,
-  searchLimiter,
-  validate(listYourResourcesSchema),
-  yourResourceController.listResources
+  validate(schemas.listYourResourcesSchema),
+  controller.listResources
 );
 
-// ✅ GET - Get single resource (Authenticated users)
+// GET - Get single (protected, not rate limited)
 router.get(
   '/:resourceId',
   authMiddleware,
-  yourResourceController.getResource
+  controller.getResource
 );
 
-// ✅ PUT - Update resource (Admin/Sysadmin only)
+// PUT - Update (protected, rate limited)
 router.put(
   '/:resourceId',
   authMiddleware,
   requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
   apiLimiter,
-  validate(updateYourResourceSchema),
-  yourResourceController.updateResource
+  validate(schemas.updateYourResourceSchema),
+  controller.updateResource
 );
 
-// ✅ DELETE - Delete resource (Admin/Sysadmin only)
+// DELETE - Delete (protected, rate limited)
 router.delete(
   '/:resourceId',
   authMiddleware,
   requireRole(ROLES.ADMIN, ROLES.SYSADMIN),
   apiLimiter,
-  yourResourceController.deleteResource
+  controller.deleteResource
 );
 
 module.exports = router;
 
-// ============================================================================
-// STEP 5: ADD CONSTANTS
-// ============================================================================
-
 /**
+ * STEP 5: ADD CONSTANTS
+ * ============================================================================
  * File: src/config/constants.js
  * 
  * What to do:
  * - Add ONLY NEW error messages needed for this API
  * - Add ONLY NEW success messages needed
  * - Don't duplicate existing ones
- * - Keep alphabetical order
+ * - Keep alphabetical order within each section
+ * 
+ * Messages already available:
+ * 
+ * ERROR_MESSAGES:
+ * - FORBIDDEN
+ * - NOT_FOUND
+ * - SERVER_ERROR
+ * - EMAIL_ALREADY_EXISTS
+ * - INVALID_* (various)
+ * - etc.
+ * 
+ * SUCCESS_MESSAGES:
+ * - STUDENT_REGISTERED
+ * - COLLEGE_CREATED
+ * - USER_CREATED
+ * - USER_UPDATED
+ * - etc.
+ * 
+ * Only add if not already present:
+ * RESOURCE_NOT_FOUND
+ * RESOURCE_CREATED
+ * RESOURCE_UPDATED
+ * RESOURCE_DELETED
  */
 
-// Add to ERROR_MESSAGES object:
-const ERROR_MESSAGES = {
-  // ... existing errors ...
-  RESOURCE_NOT_FOUND: 'Resource not found or has been deleted',
+// Add to constants.js if not already there
+const NEW_ERROR_MESSAGES = {
+  RESOURCE_NOT_FOUND: 'Resource not found',
   RESOURCE_ALREADY_EXISTS: 'Resource with this name already exists',
-  INVALID_RESOURCE_STATUS: 'Invalid resource status provided',
-  RESOURCE_ASSIGNMENT_FAILED: 'Failed to assign resource to user'
+  INVALID_RESOURCE_STATUS: 'Invalid resource status'
 };
 
-// Add to SUCCESS_MESSAGES object:
-const SUCCESS_MESSAGES = {
-  // ... existing messages ...
+const NEW_SUCCESS_MESSAGES = {
   RESOURCE_CREATED: 'Resource created successfully',
   RESOURCE_UPDATED: 'Resource updated successfully',
   RESOURCE_DELETED: 'Resource deleted successfully'
 };
 
-// ============================================================================
-// STEP 6: UPDATE ROUTES INDEX
-// ============================================================================
-
 /**
+ * STEP 6: UPDATE ROUTES INDEX
+ * ============================================================================
  * File: src/routes/index.js
  * 
  * What to do:
  * - Import your new route file
  * - Add one line to use the route
  * - That's it!
+ * 
+ * Example:
+ * const yourResourceRoutes = require('./yourResource.routes');
+ * router.use('/resources', yourResourceRoutes);
  */
 
-// Example:
-const express = require('express');
-const router = express.Router();
-
-const authRoutes = require('./auth.routes');
-const tenantRoutes = require('./tenant.routes');
-const studentRoutes = require('./student.routes');
-const userRoutes = require('./user.routes');
-const yourResourceRoutes = require('./yourResource.routes'); // ← ADD THIS LINE
-
-router.use('/auth', authRoutes);
-router.use('/admin', tenantRoutes);
-router.use('/students', studentRoutes);
-router.use('/users', userRoutes);
-router.use('/resources', yourResourceRoutes); // ← ADD THIS LINE
-
-module.exports = router;
-
 // ============================================================================
-// CHECKLIST BEFORE SUBMITTING
+// STATUS CONSTANTS & ROLES TO USE
 // ============================================================================
 
 /**
- * Before Writing Code:
- * ✅ Validator schema defined with all required fields
- * ✅ Service functions planned (create, get, update, list, delete)
- * ✅ Database queries identified
- * ✅ Pool selection logic determined (mainPool or getPoolForTenant)
- * ✅ Transaction requirements identified
- * ✅ Error cases documented
+ * STATUS - Only these two exist:
+ * - STATUS.ACTIVE = 'active'
+ * - STATUS.INACTIVE = 'inactive'
+ * 
+ * ❌ Do NOT use:
+ * - SUSPENDED
+ * - PENDING
+ * - Any other status
+ * 
+ * ROLES - Only these four exist:
+ * - ROLES.SYSADMIN = 'sysadmin'
+ * - ROLES.ADMIN = 'admin'
+ * - ROLES.TEACHER = 'teacher'
+ * - ROLES.STUDENT = 'student'
+ * 
+ * ❌ Do NOT use:
+ * - ROLES.OTHER
+ * - Any other role
+ */
+
+// ============================================================================
+// CHECKLIST BEFORE WRITING CODE
+// ============================================================================
+
+/**
+ * Pre-Development:
+ * ✅ Read this entire prompt
+ * ✅ Understand single database architecture
+ * ✅ Know your 2 rate limiters (authLimiter, apiLimiter)
+ * ✅ Know your log prefixes (API_START, API_END, API_ERROR, SECURITY, TRANSACTION)
+ * ✅ Know your status values (ACTIVE, INACTIVE only)
+ * ✅ Know your roles (SYSADMIN, ADMIN, TEACHER, STUDENT)
+ * ✅ Plan all validator schemas
+ * ✅ Plan all service methods
+ * ✅ Plan all database queries
+ * ✅ Identify where college_id filtering is needed
+ * ✅ Identify where transactions are needed
+ * ✅ Identify where authorization checks are needed
  * 
  * While Writing Code:
- * ✅ API_START logging at beginning with metadata
- * ✅ API_END logging on success with duration_ms
- * ✅ API_ERROR logging with full context
- * ✅ TRANSACTION logging for multi-step ops (start, commit, rollback)
- * ✅ SECURITY logging for authorization failures
- * ✅ VALIDATION logging for input failures
- * ✅ Correct pool used (Rule 1 & Rule 2)
- * ✅ All responses use success/error helper
- * ✅ All errors from constants.js
- * ✅ Proper HTTP status codes
- * ✅ Controllers call services (NOT direct DB)
- * ✅ No magic strings/numbers
- * ✅ JSDoc comments on all functions
- * ✅ Try-catch error handling with duration tracking
- * ✅ College ID passed to service (tenant isolation)
- * ✅ Tenant info validated in service
- * ✅ Apply appropriate rate limiters to routes
+ * ✅ Use getMainPool() ONLY
+ * ✅ Filter by college_id on EVERY query
+ * ✅ Use JSDoc comments on all functions
+ * ✅ Use try-catch with duration tracking
+ * ✅ Log API_START only for POST/PUT/DELETE with duration
+ * ✅ Log API_END only on success with duration_ms
+ * ✅ Log API_ERROR with error message
+ * ✅ Log SECURITY warnings for auth failures
+ * ✅ Log TRANSACTION commits/rollbacks
+ * ✅ Use responseHelper.success/error
+ * ✅ Use constants for error/success messages
+ * ✅ Use Joi for validation
+ * ✅ Use parameterized queries ($1, $2 syntax)
+ * ✅ Apply authMiddleware to protected routes
+ * ✅ Apply requireRole for authorization
+ * ✅ Apply apiLimiter to POST/PUT/DELETE
+ * ✅ Apply authLimiter to login endpoints only
+ * ✅ No rate limiter on GET endpoints
+ * ✅ Handle all error cases
+ * ✅ Verify college_id on all operations
+ * ✅ Use soft deletes (status = INACTIVE)
+ * ✅ Return proper HTTP status codes
  * 
  * After Writing Code:
  * ✅ No console.log() - all use logger
+ * ✅ No hardcoded strings - use constants
+ * ✅ No direct HTTP responses in service
  * ✅ All inputs validated with Joi
- * ✅ All queries parameterized
+ * ✅ All database queries parameterized
  * ✅ Authorization checks present
- * ✅ Tenant isolation verified
- * ✅ Soft delete used (status = inactive)
- * ✅ No error details exposed to client
- * ✅ Database errors handled properly
- * ✅ No passwords logged
+ * ✅ College isolation verified
+ * ✅ Error handling complete
+ * ✅ No sensitive data logged
+ * ✅ Rate limiters applied correctly
  * ✅ Route added to routes/index.js
- * ✅ New constants added (no duplicates)
- * ✅ Rate limiters applied (authLimiter, apiLimiter, searchLimiter)
+ * ✅ No tenant/multi-db references
+ * ✅ All new constants added
+ * ✅ No duplicates of existing messages
  */
 
 // ============================================================================
-// CURRENT STATE vs FUTURE STATE
+// EXPORTS & CONVENTIONS
 // ============================================================================
 
 /**
- * CURRENT (Your System Today):
+ * File Naming Conventions:
+ * - Validators: src/validators/entityValidator.js
+ * - Services: src/services/entityService.js
+ * - Controllers: src/controllers/entityController.js
+ * - Routes: src/routes/entity.routes.js
  * 
- * T1 (Default Tenant):
- * - tenant_id: 'T1'
- * - tenant_name: 'default'
- * - db_url: null
+ * Function Naming Conventions:
+ * - Controllers: getEntity, listEntities, createEntity, updateEntity, deleteEntity
+ * - Services: getById, create, update, list, delete
+ * - Schemas: createEntitySchema, updateEntitySchema, listEntitiesSchema
  * 
- * Database: SINGLE MAIN DATABASE
- * ├── colleges table
- * ├── users table
- * ├── students table
- * ├── your_resources table (new)
- * └── all other tables
+ * Response Format (Always):
+ * Success:
+ * {
+ *   "success": true,
+ *   "data": { ... },
+ *   "message": "Operation successful"
+ * }
  * 
- * Pool Usage:
- * - ALL queries use: getMainPool()
- * - OR: getPoolForTenant(null) → returns mainPool
- * - SAME database for everything
+ * Error:
+ * {
+ *   "success": false,
+ *   "message": "Error description",
+ *   "details": { ... } (optional)
+ * }
+ */
+
+// ============================================================================
+// ARCHITECTURE SUMMARY
+// ============================================================================
+
+/**
+ * Current Architecture:
+ * ├─ Single Shared Database (PostgreSQL)
+ * │ ├─ colleges table
+ * │ ├─ users table
+ * │ ├─ students table
+ * │ └─ your_resources table (new)
+ * │
+ * ├─ College Isolation via college_id
+ * │ └─ Every user/student/resource belongs to ONE college
+ * │
+ * ├─ Authentication
+ * │ ├─ JWT tokens for users, students, sysadmin
+ * │ └─ authMiddleware validates and parses token
+ * │
+ * ├─ Rate Limiting (2 limiters)
+ * │ ├─ authLimiter: 5 attempts per 15 min (login only)
+ * │ └─ apiLimiter: 50 requests per 1 min (state-changing)
+ * │
+ * ├─ Logging (Winston)
+ * │ ├─ Essential logs only
+ * │ ├─ Structured JSON output
+ * │ └─ Environment-specific levels
+ * │
+ * ├─ Database Access
+ * │ ├─ getMainPool() only - no other pools
+ * │ ├─ All queries use college_id filter
+ * │ └─ Transactions for multi-step operations
+ * │
+ * └─ Status & Roles (Fixed)
+ *   ├─ STATUS: ACTIVE, INACTIVE (2 values)
+ *   └─ ROLES: SYSADMIN, ADMIN, TEACHER, STUDENT (4 roles)
  * 
- * Your Code Action:
- * - Use getMainPool() directly for simplicity
- * - OR use getPoolForTenant(null)
- * - Both work identically right now
- * 
- * ============================================================================
- * 
- * FUTURE (When T2+ Needed):
- * 
- * T1 (Default):
- * - tenant_id: 'T1'
- * - db_url: null
- * - Uses: MAIN DATABASE
- * 
- * T2 (New Enterprise Tenant):
- * - tenant_id: 'T2'
- * - db_url: 'postgresql://user:pass@separate-host:5432/db'
- * - Uses: SEPARATE DATABASE
- * 
- * Your Code:
- * - AUTOMATICALLY uses separate pool for T2
- * - NO code changes needed
- * - Just set db_url in tenants table
- * - Your service code handles it
- * 
- * Example:
- * // This code works for BOTH T1 and T2
- * const tenantPool = getPoolForTenant({
- *   tenant_id: 'T2',
- *   db_url: 'postgresql://...' // New separate DB
- * });
- * // Returns separate pool automatically
- * 
- * // For T1:
- * const tenantPool = getPoolForTenant({
- *   tenant_id: 'T1',
- *   db_url: null // null means use main
- * });
- * // Returns mainPool
+ * ✅ Single database
+ * ✅ Simple, clean architecture
+ * ✅ Fast and performant
+ * ✅ Easy to maintain
+ * ✅ Production-ready
  */
