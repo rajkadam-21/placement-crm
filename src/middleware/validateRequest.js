@@ -52,7 +52,7 @@ function validate(schema) {
 
     } catch (err) {
       logger.error(
-        `${LOG.TRANSACTION_PREFIX} Unexpected error in validation middleware`,
+        `${err} ${LOG.TRANSACTION_PREFIX} Unexpected error in validation middleware`,
         { error: err.message }
       );
       return res.status(500).json({

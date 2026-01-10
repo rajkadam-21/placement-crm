@@ -5,6 +5,7 @@
  * Single Database Architecture
  * - No multi-tenant resolver middleware
  * - Simple, straightforward middleware chain
+ * - Only 2 rate limiters: authLimiter (login), apiLimiter (general)
  * ============================================================================
  */
 
@@ -13,7 +14,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 const requestLogger = require('./middleware/requestLogger');
-const { globalLimiter } = require('./config/rateLimiter');
+const { apiLimiter } = require('./config/rateLimiter');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -33,7 +34,7 @@ app.use(express.urlencoded({ extended: true }));
 // ============================================================================
 
 app.use(requestLogger);
-app.use(globalLimiter);
+app.use(apiLimiter);
 
 // ============================================================================
 // HEALTH CHECK

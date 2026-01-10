@@ -4,6 +4,12 @@
  * ============================================================================
  * Handles JWT validation and role-based access control
  * Single database - no multi-tenant pool logic
+ * 
+ * Supports 4 user types:
+ * 1. SYSADMIN - System administrator (NOT in database - from .env)
+ * 2. ADMIN (users table) - College administrator
+ * 3. TEACHER (users table) - College teacher
+ * 4. STUDENT (students table) - College student
  * ============================================================================
  */
 
@@ -19,14 +25,100 @@ const {
 } = require('../config/constants');
 
 /**
+ * Query user based on role
+ * 
+ * SYSADMIN: No database query (verified during login)
+ * ADMIN, TEACHER: Query users table
+ * STUDENT: Query students table
+ * 
+ * @param {Object} mainPool - Database connection pool
+ * @param {string} userId - User ID
+ * @param {string} role - User role from JWT payload
+ * @returns {Object} User data or null
+ */
+async function queryUserByRole(mainPool, userId, role) {
+  try {
+    // ====================================================================
+    // SYSADMIN: No database lookup (verified during login from .env)
+    // ====================================================================
+    if (role === ROLES.SYSADMIN) {
+      logger.debug(
+        `${LOG.TRANSACTION_PREFIX} Sysadmin token verified`,
+        { user_id: userId }
+      );
+      return {
+        id: userId,
+        user_status: STATUS.ACTIVE,
+        college_id: null,
+        user_role: ROLES.SYSADMIN,
+        college_status: STATUS.ACTIVE
+      };
+    }
+
+    // ====================================================================
+    // STUDENT: Query from students table
+    // ====================================================================
+    if (role === ROLES.STUDENT) {
+      const studentQuery = `
+        SELECT 
+          s.student_id as id,
+          s.student_status,
+          s.college_id,
+          $1 as user_role,
+          c.college_status
+        FROM students s
+        JOIN colleges c ON s.college_id = c.college_id
+        WHERE s.student_id = $2
+        LIMIT 1
+      `;
+
+      const { rows } = await mainPool.query(studentQuery, [
+        ROLES.STUDENT,
+        userId
+      ]);
+      return rows.length > 0 ? rows[0] : null;
+    }
+
+    // ====================================================================
+    // ADMIN, TEACHER: Query from users table
+    // ====================================================================
+    const userQuery = `
+      SELECT 
+        u.user_id as id,
+        u.user_status,
+        u.college_id,
+        u.user_role,
+        c.college_status
+      FROM users u
+      JOIN colleges c ON u.college_id = c.college_id
+      WHERE u.user_id = $1
+      LIMIT 1
+    `;
+
+    const { rows } = await mainPool.query(userQuery, [userId]);
+    return rows.length > 0 ? rows[0] : null;
+  } catch (err) {
+    logger.error(
+      `${LOG.TRANSACTION_PREFIX} Error querying user by role`,
+      { error: err.message, user_id: userId, role }
+    );
+    return null;
+  }
+}
+
+/**
  * Authentication Middleware
  * 
  * Flow:
  * 1. Extract & parse JWT token from Authorization header
  * 2. Verify JWT signature and expiration
- * 3. Query users table in main pool (college isolation via college_id)
+ * 3. Query correct table based on role:
+ *    - SYSADMIN → No query (verified at login from .env)
+ *    - STUDENT → students table
+ *    - ADMIN/TEACHER → users table
  * 4. Verify user is active
- * 5. Attach user to request
+ * 5. Verify college is active (if not sysadmin)
+ * 6. Attach user to request
  */
 async function authMiddleware(req, res, next) {
   try {
@@ -94,41 +186,31 @@ async function authMiddleware(req, res, next) {
     }
 
     // ====================================================================
-    // Step 4: Validate user in database (single pool)
+    // Step 4: Validate user in correct table based on role
     // ====================================================================
     const mainPool = getMainPool();
 
     logger.debug(`${LOG.TRANSACTION_PREFIX} Validating user in database`, {
-      user_id: payload.id
+      user_id: payload.id,
+      role: payload.role
     });
 
-    const userQuery = `
-      SELECT 
-        u.user_id,
-        u.user_status,
-        u.college_id,
-        u.user_role,
-        c.college_status
-      FROM users u
-      JOIN colleges c ON u.college_id = c.college_id
-      WHERE u.user_id = $1
-      LIMIT 1
-    `;
+    const dbUser = await queryUserByRole(mainPool, payload.id, payload.role);
 
-    const { rows } = await mainPool.query(userQuery, [payload.id]);
-
-    if (!rows || rows.length === 0) {
+    if (!dbUser) {
       logger.warn(
         `${LOG.SECURITY_PREFIX} User not found in database`,
-        { user_id: payload.id, ip: req.ip }
+        {
+          user_id: payload.id,
+          role: payload.role,
+          ip: req.ip
+        }
       );
       return res.status(HTTP_STATUS.UNAUTHORIZED).json({
         success: false,
         message: ERROR_MESSAGES.INVALID_TOKEN
       });
     }
-
-    const dbUser = rows[0];
 
     // Verify user is active
     if (dbUser.user_status !== STATUS.ACTIVE) {
@@ -137,6 +219,7 @@ async function authMiddleware(req, res, next) {
         {
           user_id: payload.id,
           status: dbUser.user_status,
+          role: payload.role,
           ip: req.ip
         }
       );
@@ -146,13 +229,14 @@ async function authMiddleware(req, res, next) {
       });
     }
 
-    // Verify college is active
-    if (dbUser.college_status !== STATUS.ACTIVE) {
+    // Verify college is active (skip for sysadmin - no college)
+    if (payload.role !== ROLES.SYSADMIN && dbUser.college_status !== STATUS.ACTIVE) {
       logger.warn(
         `${LOG.SECURITY_PREFIX} College is not active`,
         {
           user_id: payload.id,
           college_id: dbUser.college_id,
+          role: payload.role,
           ip: req.ip
         }
       );
@@ -168,7 +252,7 @@ async function authMiddleware(req, res, next) {
     req.user = {
       ...payload,
       college_id: dbUser.college_id,
-      user_role: dbUser.user_role
+      user_role: dbUser.user_role || payload.role
     };
 
     logger.debug(
@@ -181,7 +265,6 @@ async function authMiddleware(req, res, next) {
     );
 
     return next();
-
   } catch (err) {
     logger.error(
       `${LOG.TRANSACTION_PREFIX} Unexpected error in auth middleware`,
@@ -196,6 +279,8 @@ async function authMiddleware(req, res, next) {
 
 /**
  * Role-Based Access Control (RBAC) Middleware
+ * 
+ * Validates user has one of the required roles
  */
 function requireRole(...allowedRoles) {
   return (req, res, next) => {
@@ -236,7 +321,6 @@ function requireRole(...allowedRoles) {
       );
 
       return next();
-
     } catch (err) {
       logger.error(
         `${LOG.TRANSACTION_PREFIX} Unexpected error in requireRole`,
