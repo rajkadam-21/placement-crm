@@ -12,6 +12,9 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
+
 
 const requestLogger = require('./middleware/requestLogger');
 const { apiLimiter } = require('./config/rateLimiter');
@@ -43,6 +46,15 @@ app.use(apiLimiter);
 app.get('/health', (req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString() });
 });
+
+app.use(
+  '/api-docs',
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    explorer: true,
+    customSiteTitle: 'PCRM API Docs'
+  })
+);
 
 // ============================================================================
 // API ROUTES
