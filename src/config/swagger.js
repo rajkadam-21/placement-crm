@@ -14,7 +14,7 @@ const swaggerDefinition = {
       description: 'Local server'
     },
     {
-      url: 'https://placement-crm.onrender.com/',
+      url: 'https://placement-crm.onrender.com',
       description: 'Production server'
     }
   ],
