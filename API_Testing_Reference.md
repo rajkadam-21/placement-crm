@@ -11,7 +11,7 @@ Single Database Architecture - College, User, Student Management
 
 ```
 Method: POST
-URL: http://localhost:4000/api/v1/auth/login
+URL: http://localhost:4000/api/auth/login
 Auth: None
 Headers: Content-Type: application/json
 ```
@@ -44,7 +44,7 @@ Headers: Content-Type: application/json
 
 ```
 Method: POST
-URL: http://localhost:4000/api/v1/colleges
+URL: http://localhost:4000/api/colleges
 Auth: Bearer {token}
 Headers: Content-Type: application/json
 ```
@@ -93,7 +93,7 @@ Headers: Content-Type: application/json
 
 ```
 Method: GET
-URL: http://localhost:4000/api/v1/colleges?page=1&limit=20
+URL: http://localhost:4000/api/colleges?page=1&limit=20
 Auth: Bearer {token}
 Headers: Content-Type: application/json
 ```
@@ -138,7 +138,7 @@ Headers: Content-Type: application/json
 
 ```
 Method: GET
-URL: http://localhost:4000/api/v1/colleges/550e8400-e29b-41d4-a716-446655440001
+URL: http://localhost:4000/api/colleges/550e8400-e29b-41d4-a716-446655440001
 Auth: Bearer {token}
 Headers: Content-Type: application/json
 ```
@@ -166,7 +166,7 @@ Headers: Content-Type: application/json
 
 ```
 Method: PUT
-URL: http://localhost:4000/api/v1/colleges/550e8400-e29b-41d4-a716-446655440001
+URL: http://localhost:4000/api/colleges/550e8400-e29b-41d4-a716-446655440001
 Auth: Bearer {token}
 Headers: Content-Type: application/json
 ```
@@ -202,7 +202,7 @@ Headers: Content-Type: application/json
 
 ```
 Method: PUT
-URL: http://localhost:4000/api/v1/colleges/550e8400-e29b-41d4-a716-446655440001/features
+URL: http://localhost:4000/api/colleges/550e8400-e29b-41d4-a716-446655440001/features
 Auth: Bearer {token}
 Headers: Content-Type: application/json
 ```

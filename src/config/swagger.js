@@ -1,4 +1,5 @@
 const swaggerJSDoc = require('swagger-jsdoc');
+const authSwagger = require('../SwaggerUi/systemAdmin.js');
 
 const swaggerDefinition = {
   openapi: '3.0.0',
@@ -17,6 +18,10 @@ const swaggerDefinition = {
       description: 'Production server'
     }
   ],
+   paths: {
+    ...authSwagger.paths,
+   
+  },
   components: {
     securitySchemes: {
       BearerAuth: {

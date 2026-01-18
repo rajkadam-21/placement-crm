@@ -43,7 +43,7 @@ app.use(apiLimiter);
 // HEALTH CHECK
 // ============================================================================
 
-app.get('/health', (req, res) => {
+app.get('/', (req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString() });
 });
 

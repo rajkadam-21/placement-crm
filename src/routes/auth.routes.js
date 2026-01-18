@@ -16,41 +16,6 @@ const validate = require('../middleware/validateRequest');
 const { authLimiter } = require('../config/rateLimiter');
 const { loginSchema } = require('../validators/authValidator');
 
-/**
- * @swagger
- * tags:
- *   name: Auth
- *   description: Authentication APIs
- */
-
-/**
- * @swagger
- * /api/auth/login:
- *   post:
- *     summary: Login (System Admin / College User)
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - email
- *               - password
- *             properties:
- *               email:
- *                 type: string
- *                 example: admin@pcrm.in
- *               password:
- *                 type: string
- *                 example: adminpcrm
- *     responses:
- *       200:
- *         description: Login successful
- *       401:
- *         description: Invalid credentials
- */
 router.post(
   '/login',
   authLimiter,
@@ -58,20 +23,6 @@ router.post(
   authController.login
 );
 
-/**
- * @swagger
- * /api/auth/logout:
- *   post:
- *     summary: Logout user
- *     tags: [Auth]
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Logout successful
- *       401:
- *         description: Unauthorized
- */
 router.post(
   '/logout',
   authMiddleware,
@@ -79,20 +30,6 @@ router.post(
   authController.logout
 );
 
-/**
- * @swagger
- * /api/auth/verify:
- *   get:
- *     summary: Verify JWT token
- *     tags: [Auth]
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Token is valid
- *       401:
- *         description: Unauthorized
- */
 router.get(
   '/verify',
   authMiddleware,
