@@ -14,7 +14,7 @@ const swaggerDefinition = {
       description: 'Local server'
     },
     {
-      url: 'https://testpcrmapi.vercel.app',
+      url: 'https://placement-crm.onrender.com/',
       description: 'Production server'
     }
   ],
